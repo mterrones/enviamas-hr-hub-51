@@ -3,8 +3,18 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import Index from "./pages/Index.tsx";
-import NotFound from "./pages/NotFound.tsx";
+import { MainLayout } from "@/components/layout/MainLayout";
+import DashboardPage from "./pages/DashboardPage";
+import EmployeesPage from "./pages/EmployeesPage";
+import EmployeeProfilePage from "./pages/EmployeeProfilePage";
+import AttendancePage from "./pages/AttendancePage";
+import PayrollPage from "./pages/PayrollPage";
+import EmployeePortalPage from "./pages/EmployeePortalPage";
+import AssetsPage from "./pages/AssetsPage";
+import ReportsPage from "./pages/ReportsPage";
+import SettingsPage from "./pages/SettingsPage";
+import LoginPage from "./pages/LoginPage";
+import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
@@ -15,8 +25,18 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route element={<MainLayout />}>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/empleados" element={<EmployeesPage />} />
+            <Route path="/empleados/:id" element={<EmployeeProfilePage />} />
+            <Route path="/asistencia" element={<AttendancePage />} />
+            <Route path="/boletas" element={<PayrollPage />} />
+            <Route path="/portal" element={<EmployeePortalPage />} />
+            <Route path="/activos" element={<AssetsPage />} />
+            <Route path="/reportes" element={<ReportsPage />} />
+            <Route path="/configuracion" element={<SettingsPage />} />
+          </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
