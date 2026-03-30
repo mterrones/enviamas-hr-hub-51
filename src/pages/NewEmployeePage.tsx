@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Upload, Save } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +21,15 @@ const jefes = ["Ana Castillo", "Carlos Mendoza", "Pedro Ruiz"];
 export default function NewEmployeePage() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFotoPreview(URL.createObjectURL(file));
+    }
+  };
 
   const [form, setForm] = useState({
     nombre: "", dni: "", fechaNacimiento: "", nivelEstudios: "", carrera: "",
@@ -59,10 +68,22 @@ export default function NewEmployeePage() {
         <CardHeader><CardTitle className="text-lg">Datos Personales</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4 mb-2">
-            <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border">
-              <Upload className="w-6 h-6 text-muted-foreground" />
+            <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border overflow-hidden">
+              {fotoPreview ? (
+                <img src={fotoPreview} alt="Foto del empleado" className="w-full h-full object-cover" />
+              ) : (
+                <Upload className="w-6 h-6 text-muted-foreground" />
+              )}
             </div>
-            <Button variant="outline" size="sm">Subir foto</Button>
+            <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoChange} className="hidden" />
+            <Button variant="outline" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
+              {fotoPreview ? "Cambiar foto" : "Subir foto"}
+            </Button>
+            {fotoPreview && (
+              <Button variant="ghost" size="sm" type="button" onClick={() => setFotoPreview(null)}>
+                Quitar
+              </Button>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="space-y-2">
