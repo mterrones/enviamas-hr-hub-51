@@ -8,6 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import DashboardPage from "./pages/DashboardPage";
 import EmployeesPage from "./pages/EmployeesPage";
 import EmployeeProfilePage from "./pages/EmployeeProfilePage";
+import NewEmployeePage from "./pages/NewEmployeePage";
 import AttendancePage from "./pages/AttendancePage";
 import PayrollPage from "./pages/PayrollPage";
 import EmployeePortalPage from "./pages/EmployeePortalPage";
