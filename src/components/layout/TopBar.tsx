@@ -15,8 +15,8 @@ interface Props {
 
 export function TopBar({ onToggleSidebar }: Props) {
   const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(3);
   const { user } = useAuth();
-  const unreadCount = 3;
   const initials = user.nombre.split(" ").map(n => n[0]).join("").slice(0, 2);
 
   return (
@@ -49,7 +49,7 @@ export function TopBar({ onToggleSidebar }: Props) {
             )}
           </Button>
           {showNotifications && (
-            <NotificationsPanel onClose={() => setShowNotifications(false)} />
+            <NotificationsPanel onClose={() => setShowNotifications(false)} onUnreadCountChange={setUnreadCount} />
           )}
         </div>
 
