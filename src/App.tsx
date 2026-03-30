@@ -14,6 +14,7 @@ import EmployeePortalPage from "./pages/EmployeePortalPage";
 import AssetsPage from "./pages/AssetsPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
+import ProfilesPage from "./pages/ProfilesPage";
 import LoginPage from "./pages/LoginPage";
 import NotFound from "./pages/NotFound";
 
