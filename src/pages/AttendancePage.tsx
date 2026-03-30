@@ -4,7 +4,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarCheck, FileText, Download } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CalendarCheck, FileText, Download, CalendarIcon } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { format, differenceInCalendarDays } from "date-fns";
+import { es } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 
 const statusColorMap: Record<string, string> = {
   asistido: "bg-success",
@@ -22,13 +31,46 @@ const daysInMonth = Array.from({ length: 31 }, (_, i) => {
   return { day: i + 1, status: s };
 });
 
-const vacationRequests = [
+const empleadosMock = [
+  { id: "1", nombre: "Juan Pérez" },
+  { id: "2", nombre: "María López" },
+  { id: "3", nombre: "Carlos Mendoza" },
+  { id: "4", nombre: "Ana Torres" },
+];
+
+const initialVacationRequests = [
   { empleado: "María López", fechas: "10/04 — 14/04/2026", dias: 5, estado: "Pendiente" },
   { empleado: "Carlos Mendoza", fechas: "21/04 — 25/04/2026", dias: 5, estado: "Aprobado" },
   { empleado: "Ana Torres", fechas: "05/05 — 09/05/2026", dias: 5, estado: "Rechazado" },
 ];
 
 export default function AttendancePage() {
+  const { toast } = useToast();
+  const [showNuevaSolicitud, setShowNuevaSolicitud] = useState(false);
+  const [solicitudes, setSolicitudes] = useState(initialVacationRequests);
+  const [selEmpleado, setSelEmpleado] = useState("");
+  const [fechaInicio, setFechaInicio] = useState<Date>();
+  const [fechaFin, setFechaFin] = useState<Date>();
+  const [motivo, setMotivo] = useState("");
+
+  const diasCalculados = fechaInicio && fechaFin ? Math.max(differenceInCalendarDays(fechaFin, fechaInicio) + 1, 0) : 0;
+
+  const handleGuardar = () => {
+    if (!selEmpleado || !fechaInicio || !fechaFin || diasCalculados <= 0) {
+      toast({ title: "Error", description: "Completa todos los campos correctamente.", variant: "destructive" });
+      return;
+    }
+    const empNombre = empleadosMock.find(e => e.id === selEmpleado)?.nombre || "";
+    const fechasStr = `${format(fechaInicio, "dd/MM", { locale: es })} — ${format(fechaFin, "dd/MM/yyyy", { locale: es })}`;
+    setSolicitudes(prev => [...prev, { empleado: empNombre, fechas: fechasStr, dias: diasCalculados, estado: "Pendiente" }]);
+    toast({ title: "Solicitud enviada", description: `Vacaciones de ${empNombre} registradas como pendiente.` });
+    setShowNuevaSolicitud(false);
+    setSelEmpleado("");
+    setFechaInicio(undefined);
+    setFechaFin(undefined);
+    setMotivo("");
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -92,7 +134,7 @@ export default function AttendancePage() {
           <Card className="shadow-card">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">Solicitudes de Vacaciones</CardTitle>
-              <Button size="sm" className="gap-1.5"><CalendarCheck className="w-4 h-4" />Nueva Solicitud</Button>
+              <Button size="sm" className="gap-1.5" onClick={() => setShowNuevaSolicitud(true)}><CalendarCheck className="w-4 h-4" />Nueva Solicitud</Button>
             </CardHeader>
             <CardContent className="p-0">
               <table className="w-full">
@@ -104,8 +146,8 @@ export default function AttendancePage() {
                   <th className="text-left text-xs font-semibold text-muted-foreground px-5 py-3">Acciones</th>
                 </tr></thead>
                 <tbody>
-                  {vacationRequests.map((v) => (
-                    <tr key={v.empleado} className="border-b border-border last:border-0">
+                  {solicitudes.map((v, idx) => (
+                    <tr key={idx} className="border-b border-border last:border-0">
                       <td className="px-5 py-3 text-sm font-medium">{v.empleado}</td>
                       <td className="px-5 py-3 text-sm">{v.fechas}</td>
                       <td className="px-5 py-3 text-sm">{v.dias}</td>
@@ -121,6 +163,69 @@ export default function AttendancePage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Dialog Nueva Solicitud de Vacaciones */}
+      <Dialog open={showNuevaSolicitud} onOpenChange={setShowNuevaSolicitud}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nueva Solicitud de Vacaciones</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Empleado</Label>
+              <Select value={selEmpleado} onValueChange={setSelEmpleado}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar empleado" /></SelectTrigger>
+                <SelectContent>
+                  {empleadosMock.map(e => (
+                    <SelectItem key={e.id} value={e.id}>{e.nombre}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Fecha de inicio</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !fechaInicio && "text-muted-foreground")}>
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {fechaInicio ? format(fechaInicio, "dd/MM/yyyy") : "Seleccionar"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar mode="single" selected={fechaInicio} onSelect={setFechaInicio} initialFocus className="p-3 pointer-events-auto" />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="space-y-2">
+                <Label>Fecha de fin</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !fechaFin && "text-muted-foreground")}>
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {fechaFin ? format(fechaFin, "dd/MM/yyyy") : "Seleccionar"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar mode="single" selected={fechaFin} onSelect={setFechaFin} disabled={(date) => fechaInicio ? date < fechaInicio : false} initialFocus className="p-3 pointer-events-auto" />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+            {diasCalculados > 0 && (
+              <p className="text-sm text-muted-foreground">Días solicitados: <span className="font-semibold text-foreground">{diasCalculados}</span></p>
+            )}
+            <div className="space-y-2">
+              <Label>Motivo / Observaciones</Label>
+              <Textarea placeholder="Escribe el motivo de la solicitud..." value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNuevaSolicitud(false)}>Cancelar</Button>
+            <Button onClick={handleGuardar}>Enviar Solicitud</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
