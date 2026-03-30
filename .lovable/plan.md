@@ -1,28 +1,25 @@
 
 
-## Plan: Modal de Registrar Activo en Módulo de Activos y Equipos
+## Plan: Modal de Nuevo Usuario en Configuración
 
 ### Objetivo
-Agregar un Dialog/modal al botón "Registrar Activo" con un formulario para registrar nuevos equipos y asignarlos a empleados.
+Agregar un Dialog al botón "Nuevo Usuario" en la pestaña Usuarios de Configuración, permitiendo registrar usuarios con rol Admin RRHH o Jefe de Área.
 
-### Cambio único en `src/pages/AssetsPage.tsx`
+### Cambio único en `src/pages/SettingsPage.tsx`
 
-1. **Nuevos estados**: `showRegistrar` (boolean), campos del formulario (`tipo`, `descripcion`, `empleado`, `marca`, `modelo`, `serie`, `estado`), y lista dinámica de activos con `useState`
+1. **Convertir a componente con estado**: agregar `useState` para `showNuevoUsuario`, campos del formulario (`nombre`, `email`, `rol`, `area`, `password`) y lista dinámica de usuarios
 2. **Dialog con formulario**:
-   - **Tipo de activo** (Select): Laptop, Monitor, Headset, Teclado, Mouse, Otro
-   - **Marca** (Input)
-   - **Modelo / Descripción** (Input)
-   - **Número de serie** (Input)
-   - **Empleado asignado** (Select): lista mock de empleados + opción "Sin asignar"
-   - **Estado** (Select): En uso, Asignado, En mantenimiento, Disponible
-   - **Fecha de asignación**: automática (fecha actual) o seleccionable
-   - **Observaciones** (Textarea, opcional)
-3. **Al guardar**: agregar el activo a la lista local, cerrar modal, mostrar toast de confirmación
-4. **Botón** → `onClick={() => setShowRegistrar(true)}`
+   - **Nombre completo** (Input)
+   - **Email** (Input type email)
+   - **Rol** (Select): Admin RRHH, Jefe de Área
+   - **Área** (Select, visible solo si rol = Jefe de Área): Contact Center, Ventas, Soporte, Administración, etc.
+   - **Contraseña temporal** (Input type password)
+3. **Al guardar**: agregar usuario a la lista local con estado "Activo", cerrar modal, toast de confirmación
+4. **Botón** → `onClick={() => setShowNuevoUsuario(true)}`
 
 ### Imports adicionales
 - `Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter`
-- `Label`, `Textarea`
-- `useToast` / `toast` de sonner
-- `format` de `date-fns`
+- `Select, SelectContent, SelectItem, SelectTrigger, SelectValue`
+- `Textarea` (no necesario aquí), `useToast`
+- `useState` de React
 
