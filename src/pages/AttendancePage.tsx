@@ -160,9 +160,6 @@ export default function AttendancePage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" variant="outline" className="gap-1.5" onClick={handleVerRegistro}>
-                    <Eye className="w-4 h-4" />Ver Registro
-                  </Button>
                 </div>
               </div>
             </CardHeader>
