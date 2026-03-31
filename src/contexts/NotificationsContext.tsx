@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { onToastAdded } from "@/hooks/use-toast";
 
+/** Maps sub-routes to their parent module route */
+function getModuleRoute(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length > 1) {
+    return "/" + segments[0];
+  }
+  return path;
+}
+
 export interface Notification {
   id: number;
   type: string;
@@ -40,7 +49,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       type,
       time: "Justo ahora",
       read: false,
-      link: link || window.location.pathname,
+      link: link || getModuleRoute(window.location.pathname),
     };
     setNotifications(prev => [newNotif, ...prev]);
   }, []);
