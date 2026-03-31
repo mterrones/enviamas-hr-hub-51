@@ -1,31 +1,46 @@
 
 
-## Plan: Notificaciones interactivas — clic para navegar, marcar como leída, eliminar
+## Plan: Sincronizar toasts con el panel de notificaciones
 
 ### Objetivo
-Hacer que cada notificación: (1) navegue a la ruta correspondiente al hacer clic, (2) cambie visualmente a "leída" tras el clic, y (3) tenga un botón X para eliminarla. Actualizar el contador de no leídas en el TopBar.
+Cada vez que se dispare un `toast()` en la app (al crear empleado, registrar activo, enviar solicitud, etc.), también se agregue automáticamente como notificación en el panel de la campana del TopBar.
 
-### Cambios en `src/components/notifications/NotificationsPanel.tsx`
+### Enfoque
+Crear un contexto global de notificaciones (`NotificationsContext`) que:
+1. Mantenga la lista de notificaciones de forma global (no solo en TopBar)
+2. Exponga una función `addNotification` que se pueda llamar desde cualquier parte
+3. Intercepte los toasts para agregar notificaciones automáticamente
 
-1. **Estado local de notificaciones**: Convertir la lista estática en `useState` para poder mutar (marcar leídas, eliminar)
-2. **Agregar campo `link` a cada notificación**:
-   - "Contrato por vencer" → `/empleados`
-   - "Boleta disponible" → `/boletas`
-   - "Solicitud aprobada" → `/portal`
-   - "Nuevo empleado" → `/empleados`
-3. **Al hacer clic en una notificación**:
-   - Marcarla como `read: true` (cambia el fondo de `bg-accent/50` a transparente)
-   - Navegar a la ruta con `useNavigate()` y cerrar el panel
-4. **Botón X por notificación**: Agregar un icono X a la derecha de cada item que elimine esa notificación del estado (con `stopPropagation` para no activar la navegación)
-5. **Props nuevas**: Agregar `onUnreadCountChange` callback para que el TopBar refleje el conteo real de no leídas
-6. **Mensaje vacío**: Mostrar "Sin notificaciones" si la lista queda vacía
+### Archivos a crear/modificar
 
-### Cambios en `src/components/layout/TopBar.tsx`
+**1. Crear `src/contexts/NotificationsContext.tsx`**
+- Context con estado global de notificaciones y funciones: `addNotification`, `markAsRead`, `deleteNotification`
+- Incluir las notificaciones iniciales existentes
+- Función `addNotification(title, description, type, link?)` que genera un nuevo item con timestamp "Justo ahora"
 
-1. Reemplazar `unreadCount = 3` por un estado reactivo alimentado desde el callback del `NotificationsPanel`
-2. Pasar `onUnreadCountChange` al componente de notificaciones
+**2. Modificar `src/hooks/use-toast.ts`**
+- Agregar un listener global (`onToastAdded`) que el contexto de notificaciones pueda suscribirse
+- Cuando se dispara un toast (no destructive/error), emitir al listener con título y descripción
 
-### Imports adicionales
-- `useNavigate` de `react-router-dom`
-- `useState` de React
+**3. Modificar `src/components/layout/TopBar.tsx`**
+- Reemplazar el `useState` local de notificaciones por `useNotifications()` del contexto
+- Simplificar: el estado ahora vive en el contexto
+
+**4. Modificar `src/components/notifications/NotificationsPanel.tsx`**
+- Recibir las funciones del contexto vía props (sin cambios grandes, ya es controlado)
+
+**5. Modificar `src/App.tsx` o `src/main.tsx`**
+- Envolver la app con `NotificationsProvider`
+
+### Mapeo de tipo de toast a notificación
+- Toast normal → tipo "info", link según la ruta actual
+- Toast destructive → tipo "warning", sin agregar a notificaciones (son errores de validación)
+
+### Flujo
+```text
+Usuario guarda → toast({ title, description }) 
+  → use-toast dispatch + listener global
+  → NotificationsContext.addNotification()
+  → Campana muestra nuevo badge
+```
 
