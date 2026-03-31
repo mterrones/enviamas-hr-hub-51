@@ -93,14 +93,6 @@ export default function AttendancePage() {
     setFirstDayOffset(getFirstDayOffset(y, m));
   };
 
-  const handleVerRegistro = () => {
-    if (selectedEmpleado === "all") {
-      toast({ title: "Selecciona un empleado", description: "Debes seleccionar un empleado específico para ver su registro.", variant: "destructive" });
-      return;
-    }
-    const empNombre = empleadosMock.find(e => e.id === selectedEmpleado)?.nombre || "";
-    toast({ title: "Registro de asistencia", description: `Mostrando registro de ${empNombre} — ${meses[parseInt(selectedMonth)]} ${selectedYear}` });
-  };
 
   const handleGuardar = () => {
     if (!selEmpleado || !fechaInicio || !fechaFin || diasCalculados <= 0) {
