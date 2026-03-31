@@ -1,5 +1,5 @@
 import { Bell, LogOut, Menu } from "lucide-react";
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
