@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate:api": "openapi-typescript ../EnviaMasRRHH_Back/docs/openapi/rrhh-v1.yaml -o src/api/contracts/schema.d.ts"
+    "generate:api": "openapi-typescript ../enviamas-rrhh-backend/docs/openapi/rrhh-v1.yaml -o src/api/contracts/schema.d.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

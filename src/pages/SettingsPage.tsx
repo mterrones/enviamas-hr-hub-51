@@ -54,7 +54,8 @@ function formatAuditMeta(meta: Record<string, unknown> | null, ip: string | null
   return bits.length > 0 ? bits.join(" · ") : "—";
 }
 
-function roleLabel(slug: string | null | undefined): string {
+function roleLabel(slug: string | null | undefined, displayNameFromApi?: string | null): string {
+  if (displayNameFromApi && displayNameFromApi.trim() !== "") return displayNameFromApi.trim();
   if (!slug) return "—";
   return ROLE_LABELS[slug as AppRole] ?? slug;
 }
@@ -1329,7 +1330,7 @@ export default function SettingsPage() {
                 <SelectContent>
                   {systemRoles.map((r) => (
                     <SelectItem key={r.id} value={r.slug}>
-                      {roleLabel(r.slug)}
+                      {roleLabel(r.slug, r.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>

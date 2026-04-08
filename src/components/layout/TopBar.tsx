@@ -1,7 +1,7 @@
 import { Bell, LogOut, Menu } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
@@ -81,6 +81,9 @@ export function TopBar({ onToggleSidebar }: Props) {
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-3 hover:bg-muted rounded-lg px-3 py-1.5 transition-colors">
               <Avatar className="w-8 h-8">
+                {user?.avatar ? (
+                  <AvatarImage src={user.avatar} alt="" referrerPolicy="no-referrer" />
+                ) : null}
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
                   {initials}
                 </AvatarFallback>
