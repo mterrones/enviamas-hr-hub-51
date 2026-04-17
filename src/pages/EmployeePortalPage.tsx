@@ -43,15 +43,22 @@ import {
   patchPortalAttendanceJustification,
   uploadPortalAttendanceJustificationFile,
   fetchPortalAssetsPage,
+  downloadPortalEmployeeDocumentBlob,
   fetchPortalContact,
+  fetchPortalDocuments,
   fetchPortalPayslipsPage,
   fetchPortalResignationRequestsPage,
   fetchPortalVacationRequestsPage,
   fetchPortalVacationBalance,
   fetchPortalNotificationsPage,
+  fetchPortalEmployeePhotoBlob,
   patchPortalNotificationRead,
   postPortalNotificationsReadAll,
   patchPortalContact,
+  type PortalContact,
+  type PortalEmployeeDocumentRow,
+  type PortalPersonalSnapshot,
+  type PortalWorkSnapshot,
   type PortalPayslip,
   type PortalEmployeeNotification,
   type PortalAsset,
@@ -59,7 +66,18 @@ import {
   type VacationBalanceData,
 } from "@/api/portal";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
-import { FileText, Calendar as CalendarIcon, Bell, User, NotebookPen, Laptop, Download, Pencil, Trash2 } from "lucide-react";
+import {
+  FileText,
+  Calendar as CalendarIcon,
+  Bell,
+  User,
+  NotebookPen,
+  Laptop,
+  Download,
+  Pencil,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { addDays, format, differenceInCalendarDays, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { formatDecimalHoursAsDuration } from "@/lib/formatWorkedDuration";
@@ -69,6 +87,42 @@ function formatPen(amount: string): string {
   const n = Number(amount);
   if (Number.isNaN(n)) return amount;
   return new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN" }).format(n);
+}
+
+function portalFieldDisplay(v: string | null | undefined): string {
+  const t = (v ?? "").trim();
+  return t === "" ? "—" : t;
+}
+
+function portalEmployeeStatusLabel(s: string): string {
+  const m: Record<string, string> = {
+    activo: "Activo",
+    suspendido: "Suspendido",
+    cesado: "Cesado",
+    vacaciones: "En vacaciones",
+  };
+  return m[s] ?? s;
+}
+
+const portalReadonlyFieldClass = "bg-muted pointer-events-none select-none";
+
+function portalManagerLabel(name: string | null | undefined): string {
+  const t = (name ?? "").trim();
+  return t === "" ? "Sin jefe asignado" : t;
+}
+
+const portalPersonalPdfSlots = [
+  { type: "antecedentes" as const, label: "Antecedentes policiales (PDF)" },
+  { type: "cv" as const, label: "CV (PDF)" },
+  { type: "medical_exam" as const, label: "Examen Médico Ocupacional (PDF)" },
+];
+
+function portalLatestDocByType(rows: PortalEmployeeDocumentRow[]): Map<string, PortalEmployeeDocumentRow> {
+  const m = new Map<string, PortalEmployeeDocumentRow>();
+  for (const d of rows) {
+    if (!m.has(d.type)) m.set(d.type, d);
+  }
+  return m;
 }
 
 function payslipPeriodLabel(row: PortalPayslip): string {
@@ -368,6 +422,12 @@ export default function EmployeePortalPage() {
   const [contactLoading, setContactLoading] = useState(false);
   const [contactSaving, setContactSaving] = useState(false);
   const [contactError, setContactError] = useState<string | null>(null);
+  const [portalPersonal, setPortalPersonal] = useState<PortalPersonalSnapshot | null>(null);
+  const [portalWork, setPortalWork] = useState<PortalWorkSnapshot | null>(null);
+  const [hasEmployeePhotoFile, setHasEmployeePhotoFile] = useState(false);
+  const [profilePhotoObjectUrl, setProfilePhotoObjectUrl] = useState<string | null>(null);
+  const [portalDocuments, setPortalDocuments] = useState<PortalEmployeeDocumentRow[]>([]);
+  const [portalEmployeeDocDownloadingId, setPortalEmployeeDocDownloadingId] = useState<number | null>(null);
 
   const [notificationPage, setNotificationPage] = useState(1);
   const [notifications, setNotifications] = useState<PortalEmployeeNotification[]>([]);
@@ -396,6 +456,9 @@ export default function EmployeePortalPage() {
   const [payslipPdfDownloadingId, setPayslipPdfDownloadingId] = useState<number | null>(null);
 
   const balanceYear = useMemo(() => new Date().getFullYear(), []);
+
+  const portalDocByType = useMemo(() => portalLatestDocByType(portalDocuments), [portalDocuments]);
+  const portalContractDoc = portalDocByType.get("contract");
 
   const attendancePeriod = useMemo(() => {
     const from = format(new Date(portalAttYear, portalAttMonthIndex, 1), "yyyy-MM-dd");
@@ -688,6 +751,20 @@ export default function EmployeePortalPage() {
     setEditingVacationId(null);
   };
 
+  const applyPortalContactResponse = useCallback((d: PortalContact) => {
+    setCorporateEmail(d.corporate_email ?? "");
+    setContactPhone(d.phone ?? "");
+    setContactPersonalEmail(d.personal_email ?? "");
+    setContactAddress(d.address ?? "");
+    setContactEmergencyPhone(d.emergency_contact_phone ?? "");
+    setBank(d.bank ?? "");
+    setBankAccount(d.bank_account ?? "");
+    setPensionFund(d.pension_fund ?? "");
+    setPortalPersonal(d.personal);
+    setPortalWork(d.work);
+    setHasEmployeePhotoFile(Boolean(d.has_employee_photo_file));
+  }, []);
+
   const loadContact = useCallback(async () => {
     if (!hasEmployee) {
       setCorporateEmail("");
@@ -698,31 +775,97 @@ export default function EmployeePortalPage() {
       setBank("");
       setBankAccount("");
       setPensionFund("");
+      setPortalPersonal(null);
+      setPortalWork(null);
+      setHasEmployeePhotoFile(false);
+      setPortalDocuments([]);
+      setProfilePhotoObjectUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
       setContactError(null);
       return;
     }
     setContactLoading(true);
     setContactError(null);
     try {
-      const r = await fetchPortalContact();
-      setCorporateEmail(r.data.corporate_email ?? "");
-      setContactPhone(r.data.phone ?? "");
-      setContactPersonalEmail(r.data.personal_email ?? "");
-      setContactAddress(r.data.address ?? "");
-      setContactEmergencyPhone(r.data.emergency_contact_phone ?? "");
-      setBank(r.data.bank ?? "");
-      setBankAccount(r.data.bank_account ?? "");
-      setPensionFund(r.data.pension_fund ?? "");
+      const [r, docRes] = await Promise.all([fetchPortalContact(), fetchPortalDocuments()]);
+      applyPortalContactResponse(r.data);
+      setPortalDocuments(docRes.data);
     } catch (e) {
       setContactError(requestErrorMessage(e));
+      setPortalDocuments([]);
     } finally {
       setContactLoading(false);
     }
-  }, [hasEmployee]);
+  }, [hasEmployee, applyPortalContactResponse]);
+
+  const handleDownloadPortalEmployeeDocument = useCallback(
+    async (doc: PortalEmployeeDocumentRow) => {
+      setPortalEmployeeDocDownloadingId(doc.id);
+      try {
+        const blob = await downloadPortalEmployeeDocumentBlob(doc.id);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const base = doc.filename.replace(/[^\w.\-]+/g, "_") || "documento";
+        const safe = base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+        a.download = safe;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        const msg = e instanceof ApiHttpError ? e.apiError?.message ?? e.message : "No se pudo descargar";
+        toast({
+          title: "Error",
+          description: typeof msg === "string" ? msg : "Intenta de nuevo",
+          variant: "destructive",
+        });
+      } finally {
+        setPortalEmployeeDocDownloadingId(null);
+      }
+    },
+    [toast],
+  );
 
   useEffect(() => {
     if (activeTab === "datos") void loadContact();
   }, [activeTab, loadContact]);
+
+  useEffect(() => {
+    if (activeTab !== "datos" || !hasEmployee || contactLoading || !hasEmployeePhotoFile) {
+      setProfilePhotoObjectUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const blob = await fetchPortalEmployeePhotoBlob();
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        setProfilePhotoObjectUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+      } catch {
+        if (!cancelled) {
+          setProfilePhotoObjectUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return null;
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setProfilePhotoObjectUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    };
+  }, [activeTab, hasEmployee, contactLoading, hasEmployeePhotoFile]);
 
   const loadNotifications = useCallback(async () => {
     if (!hasEmployee) {
@@ -958,14 +1101,7 @@ export default function EmployeePortalPage() {
         bank_account: bankAccount.trim() || null,
         pension_fund: pensionFund.trim() || null,
       });
-      setCorporateEmail(r.data.corporate_email ?? "");
-      setContactPhone(r.data.phone ?? "");
-      setContactPersonalEmail(r.data.personal_email ?? "");
-      setContactAddress(r.data.address ?? "");
-      setContactEmergencyPhone(r.data.emergency_contact_phone ?? "");
-      setBank(r.data.bank ?? "");
-      setBankAccount(r.data.bank_account ?? "");
-      setPensionFund(r.data.pension_fund ?? "");
+      applyPortalContactResponse(r.data);
       toast({ title: "Datos actualizados", description: "Tu información se guardó correctamente." });
     } catch (e) {
       const msg = requestErrorMessage(e);
@@ -1161,26 +1297,112 @@ export default function EmployeePortalPage() {
             <p className="text-sm text-muted-foreground">{emptyStateNoEmployeeMessage}</p>
           ) : (
             <>
+              {portalPersonal && portalWork ? (
+                <Card className="shadow-card">
+                  <CardHeader>
+                    <CardTitle className="text-lg">Datos Personales</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-4 mb-2">
+                      <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border overflow-hidden">
+                        {profilePhotoObjectUrl || user?.avatar ? (
+                          <img
+                            src={profilePhotoObjectUrl ?? user?.avatar ?? ""}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            referrerPolicy={profilePhotoObjectUrl ? undefined : "no-referrer"}
+                          />
+                        ) : (
+                          <Upload className="w-6 h-6 text-muted-foreground" />
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground max-w-[min(100%,280px)]">
+                        La foto proviene de la cuenta corporativa vinculada y no se puede cambiar aquí.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label>Nombre</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.first_name)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Apellido</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.last_name)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>DNI</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.dni)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha de nacimiento</Label>
+                        <Input
+                          readOnly
+                          className={cn(portalReadonlyFieldClass)}
+                          value={portalPersonal.birth_date ? formatAppDate(portalPersonal.birth_date) : ""}
+                          placeholder="—"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Nivel de estudios</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.education_level)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Carrera / Especialidad</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalPersonal.degree)} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                      {portalPersonalPdfSlots.map((slot) => {
+                        const doc = portalDocByType.get(slot.type);
+                        return (
+                          <div key={slot.type} className="space-y-2">
+                            <Label>{slot.label}</Label>
+                            {doc ? (
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                                <p className="text-xs text-muted-foreground truncate min-w-0 flex-1">{doc.filename}</p>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="shrink-0 w-fit gap-1.5"
+                                  disabled={portalEmployeeDocDownloadingId === doc.id}
+                                  onClick={() => void handleDownloadPortalEmployeeDocument(doc)}
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  {portalEmployeeDocDownloadingId === doc.id ? "Descargando…" : "Descargar"}
+                                </Button>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">Sin archivo registrado.</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+
               <Card className="shadow-card">
                 <CardHeader>
-                  <CardTitle className="text-base">Datos de Contacto</CardTitle>
+                  <CardTitle className="text-lg">Datos de Contacto</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <p className="text-xs text-muted-foreground">
-                    El correo electrónico corporativo es el de tu cuenta de acceso y no se puede cambiar aquí. Puedes
-                    actualizar el resto de datos cuando lo necesites.
-                  </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="portal-corporate-email">Correo Electrónico</Label>
+                      <Label htmlFor="portal-corporate-email">Correo corporativo</Label>
                       <Input
                         id="portal-corporate-email"
                         type="email"
                         readOnly
+                        tabIndex={-1}
                         value={corporateEmail}
                         placeholder="—"
-                        className="bg-muted"
+                        className={cn("bg-muted", "pointer-events-none select-none")}
                       />
+                      <p className="text-xs text-muted-foreground">
+                        Proviene de la cuenta de usuario del colaborador. La ficha se crea o enlaza al iniciar sesión por primera vez.
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="portal-phone">Teléfono</Label>
@@ -1234,7 +1456,7 @@ export default function EmployeePortalPage() {
 
               <Card className="shadow-card">
                 <CardHeader>
-                  <CardTitle className="text-base">Datos Bancarios y Previsionales</CardTitle>
+                  <CardTitle className="text-lg">Datos Bancarios y Previsionales</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1282,6 +1504,86 @@ export default function EmployeePortalPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {portalWork ? (
+                <Card className="shadow-card">
+                  <CardHeader>
+                    <CardTitle className="text-lg">Datos Laborales</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label>Área</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalWork.department_name)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Puesto</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalWork.position)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Modalidad</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalWork.modality)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Tipo de contrato</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalFieldDisplay(portalWork.contract_type)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha de inicio</Label>
+                        <Input
+                          readOnly
+                          className={cn(portalReadonlyFieldClass)}
+                          value={portalWork.contract_start ? formatAppDate(portalWork.contract_start) : ""}
+                          placeholder="—"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha fin de contrato</Label>
+                        <Input
+                          readOnly
+                          className={cn(portalReadonlyFieldClass)}
+                          value={portalWork.contract_end ? formatAppDate(portalWork.contract_end) : ""}
+                          placeholder="—"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Jefe directo</Label>
+                        <Input readOnly className={cn(portalReadonlyFieldClass)} value={portalManagerLabel(portalWork.manager_name)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Estado</Label>
+                        <Input
+                          readOnly
+                          className={cn(portalReadonlyFieldClass)}
+                          value={portalWork.status ? portalEmployeeStatusLabel(portalWork.status) : ""}
+                          placeholder="—"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2 pt-2">
+                      <Label>Contrato (PDF)</Label>
+                      {portalContractDoc ? (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 max-w-md">
+                          <p className="text-xs text-muted-foreground truncate min-w-0 flex-1">{portalContractDoc.filename}</p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0 w-fit gap-1.5"
+                            disabled={portalEmployeeDocDownloadingId === portalContractDoc.id}
+                            onClick={() => void handleDownloadPortalEmployeeDocument(portalContractDoc)}
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            {portalEmployeeDocDownloadingId === portalContractDoc.id ? "Descargando…" : "Descargar"}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Sin archivo registrado.</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               <Button type="button" onClick={() => void handleSaveContact()} disabled={contactSaving}>
                 {contactSaving ? "Guardando…" : "Guardar cambios"}

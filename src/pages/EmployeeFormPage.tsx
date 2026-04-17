@@ -14,11 +14,9 @@ import {
   createEmployee,
   fetchEmployee,
   fetchAllEmployees,
-  fetchLinkableUsers,
   updateEmployee,
   type Employee,
   type EmployeeWrite,
-  type LinkableUserOption,
 } from "@/api/employees";
 import { uploadEmployeeDocument, type EmployeeDocumentType } from "@/api/employeeDocuments";
 import { fetchEmployeePhotoBlob, uploadEmployeePhoto } from "@/api/employeePhotos";
@@ -121,7 +119,6 @@ type FormState = {
   fechaFin: string;
   managerId: string;
   estado: string;
-  linkedUserId: string;
 };
 
 function emptyForm(): FormState {
@@ -150,7 +147,6 @@ function emptyForm(): FormState {
     fechaFin: "",
     managerId: "__none__",
     estado: "activo",
-    linkedUserId: "__none__",
   };
 }
 
@@ -185,7 +181,6 @@ function employeeToForm(e: Employee): FormState {
     fechaFin: toInputDate(e.contract_end),
     managerId: e.manager_id != null ? String(e.manager_id) : "__none__",
     estado: e.status ?? "activo",
-    linkedUserId: e.user_id != null ? String(e.user_id) : "__none__",
   };
 }
 
@@ -216,20 +211,16 @@ function buildPayloadForCreate(form: FormState): EmployeeWrite {
   if (form.tipoContrato) payload.contract_type = form.tipoContrato;
   if (form.fechaInicio) payload.contract_start = form.fechaInicio;
   if (form.fechaFin) payload.contract_end = form.fechaFin;
-  if (form.linkedUserId && form.linkedUserId !== "__none__") {
-    payload.user_id = Number(form.linkedUserId);
-  }
   return payload;
 }
 
-function buildPayloadForUpdate(form: FormState): Partial<EmployeeWrite> {
+function buildPayloadForUpdate(form: FormState, lockIdentityFields: boolean): Partial<EmployeeWrite> {
   const salaryNum = form.sueldo.trim() === "" ? undefined : Number(form.sueldo);
-  const identityLocked = form.linkedUserId !== "__none__";
   const payload: Partial<EmployeeWrite> = {
     dni: form.dni.trim(),
     status: form.estado as components["schemas"]["EmployeeStatus"],
   };
-  if (!identityLocked) {
+  if (!lockIdentityFields) {
     payload.first_name = form.nombre.trim();
     payload.last_name = form.apellido.trim();
   }
@@ -255,7 +246,6 @@ function buildPayloadForUpdate(form: FormState): Partial<EmployeeWrite> {
   payload.contract_type = form.tipoContrato || null;
   payload.contract_start = form.fechaInicio || null;
   payload.contract_end = form.fechaFin || null;
-  payload.user_id = form.linkedUserId && form.linkedUserId !== "__none__" ? Number(form.linkedUserId) : null;
   return payload;
 }
 
@@ -284,7 +274,6 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   }, []);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [managers, setManagers] = useState<{ id: number; first_name: string; last_name: string }[]>([]);
-  const [linkableUsers, setLinkableUsers] = useState<LinkableUserOption[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [recordLoading, setRecordLoading] = useState(mode === "edit");
   const [recordError, setRecordError] = useState<string | null>(null);
@@ -293,6 +282,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [pendingDocuments, setPendingDocuments] = useState(emptyPendingDocuments);
+  const [hasLinkedUserAccount, setHasLinkedUserAccount] = useState(false);
 
   const handlePendingDocChange = (slot: FormDocumentSlot) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
@@ -331,12 +321,6 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
       if (mode === "create") {
         const emps = await fetchAllEmployees();
         setManagers(emps.map((e) => ({ id: e.id, first_name: e.first_name, last_name: e.last_name })));
-        try {
-          const lu = await fetchLinkableUsers();
-          setLinkableUsers(lu.data);
-        } catch {
-          setLinkableUsers([]);
-        }
       }
     } catch {
       toast({
@@ -354,6 +338,12 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
   }, [loadCatalog]);
 
   useEffect(() => {
+    if (mode === "create") {
+      setHasLinkedUserAccount(false);
+    }
+  }, [mode]);
+
+  useEffect(() => {
     if (mode !== "edit" || employeeId == null) return undefined;
 
     let cancelled = false;
@@ -364,6 +354,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         const [empRes, depts] = await Promise.all([fetchEmployee(employeeId), fetchDepartments()]);
         if (cancelled) return;
         const e = empRes.data;
+        setHasLinkedUserAccount(e.user_id != null && e.user_id > 0);
         setFotoFile(null);
         setForm(employeeToForm(e));
         setDepartments(
@@ -413,12 +404,6 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
           }
         }
         if (!cancelled) setManagers(list);
-        try {
-          const lu = await fetchLinkableUsers(e.user_id ?? undefined);
-          if (!cancelled) setLinkableUsers(lu.data);
-        } catch {
-          if (!cancelled) setLinkableUsers([]);
-        }
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof ApiHttpError ? err.apiError?.message ?? err.message : "No se pudo cargar el empleado";
@@ -461,47 +446,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
     return (dept?.positions ?? []).map((p) => p.name);
   }, [form.departmentId, departments]);
 
-  const lockPersonalFromLink = form.linkedUserId !== "__none__";
-
-  const handleLinkedUserChange = (value: string) => {
-    if (mode === "edit") {
-      if (value === "__none__") {
-        setForm((prev) => ({ ...prev, linkedUserId: value, correoElectronico: "" }));
-        return;
-      }
-      const u = linkableUsers.find((x) => String(x.id) === value);
-      setForm((prev) => ({
-        ...prev,
-        linkedUserId: value,
-        correoElectronico: u?.email?.trim() ?? "",
-      }));
-      return;
-    }
-    if (value === "__none__") {
-      setForm((prev) => ({ ...prev, linkedUserId: value, correoElectronico: "" }));
-      setFotoFile(null);
-      setPreviewUrl(null);
-      return;
-    }
-    const u = linkableUsers.find((x) => String(x.id) === value);
-    if (!u) {
-      update("linkedUserId", value);
-      return;
-    }
-    const trimmed = u.name.trim();
-    const sp = trimmed.indexOf(" ");
-    const nombreFromUser = sp === -1 ? trimmed : trimmed.slice(0, sp).trim();
-    const apellidoFromUser = sp === -1 ? "" : trimmed.slice(sp + 1).trim();
-    setForm((prev) => ({
-      ...prev,
-      linkedUserId: value,
-      nombre: nombreFromUser,
-      apellido: apellidoFromUser,
-      correoElectronico: u.email?.trim() ?? "",
-    }));
-    setFotoFile(null);
-    setPreviewUrl(u.avatar_path?.trim() ? u.avatar_path : null);
-  };
+  const identityLocked = mode === "edit" && hasLinkedUserAccount;
 
   const handleSave = async () => {
     if (!form.nombre.trim() || !form.apellido.trim() || !form.dni.trim()) {
@@ -545,13 +490,13 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         }
         navigate(`/empleados/${newId}`);
       } else if (employeeId != null) {
-        const payload = buildPayloadForUpdate(form);
+        const payload = buildPayloadForUpdate(form, identityLocked);
         await updateEmployee(employeeId, payload);
         const failed = await uploadPendingEmployeeDocuments(employeeId, pendingDocuments);
         setPendingDocuments(emptyPendingDocuments());
         let photoUploadFailed = false;
         let photoErrorDetail: string | null = null;
-        if (fotoFile && !lockPersonalFromLink) {
+        if (fotoFile && !identityLocked) {
           try {
             await uploadEmployeePhoto(employeeId, fotoFile);
           } catch (e) {
@@ -642,34 +587,6 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
         <>
           <Card className="shadow-card">
             <CardHeader>
-              <CardTitle className="text-lg">Usuario del sistema</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 max-w-xl">
-              <div className="space-y-2">
-                <Label>Cuenta vinculada</Label>
-                <Select value={form.linkedUserId} onValueChange={handleLinkedUserChange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar usuario" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Sin vincular</SelectItem>
-                    {linkableUsers.map((u) => (
-                      <SelectItem key={u.id} value={String(u.id)}>
-                        {u.name} ({u.email})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Vincula la ficha al usuario que inicia sesión para habilitar el portal del empleado (boletas, asistencias propias,
-                  etc.). En alta nueva, al elegir una cuenta se rellenan nombre, correo electrónico corporativo y foto desde el perfil vinculado.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-card">
-            <CardHeader>
               <CardTitle className="text-lg">Datos Personales</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -686,7 +603,7 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                     <Upload className="w-6 h-6 text-muted-foreground" />
                   )}
                 </div>
-                {!lockPersonalFromLink ? (
+                {!identityLocked ? (
                   <>
                     <input
                       type="file"
@@ -712,7 +629,11 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                       </Button>
                     ) : null}
                   </>
-                ) : null}
+                ) : (
+                  <p className="text-xs text-muted-foreground max-w-[220px]">
+                    La foto proviene de la cuenta corporativa vinculada y no se puede cambiar aquí.
+                  </p>
+                )}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
@@ -721,8 +642,8 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                     placeholder="Ej: Juan"
                     value={form.nombre}
                     onChange={(e) => update("nombre", e.target.value)}
-                    readOnly={lockPersonalFromLink}
-                    className={cn(lockPersonalFromLink && "bg-muted")}
+                    readOnly={identityLocked}
+                    className={cn(identityLocked && "bg-muted")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -731,8 +652,8 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
                     placeholder="Ej: Pérez"
                     value={form.apellido}
                     onChange={(e) => update("apellido", e.target.value)}
-                    readOnly={lockPersonalFromLink}
-                    className={cn(lockPersonalFromLink && "bg-muted")}
+                    readOnly={identityLocked}
+                    className={cn(identityLocked && "bg-muted")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -812,14 +733,20 @@ export function EmployeeFormPage({ mode, employeeId }: EmployeeFormPageProps) {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label>Correo Electrónico</Label>
+                  <Label>Correo corporativo</Label>
                   <Input
                     type="email"
                     readOnly
+                    tabIndex={identityLocked ? -1 : undefined}
                     value={form.correoElectronico}
-                    placeholder="Sin cuenta vinculada"
-                    className="bg-muted"
+                    placeholder="Se muestra cuando el colaborador tiene cuenta de acceso"
+                    className={cn("bg-muted", identityLocked && "pointer-events-none select-none")}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    {identityLocked
+                      ? "Definido por la cuenta de acceso vinculada; no se puede editar aquí."
+                      : "Proviene de la cuenta de usuario del colaborador. La ficha se crea o enlaza al iniciar sesión por primera vez."}
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label>Teléfono</Label>

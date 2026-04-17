@@ -350,6 +350,30 @@ export async function deletePortalResignationRequest(id: number) {
   return apiRequest<void>(`/portal/resignation-requests/${id}`, { method: "DELETE" });
 }
 
+export type PortalPersonalSnapshot = {
+  first_name: string | null;
+  last_name: string | null;
+  dni: string | null;
+  birth_date: string | null;
+  education_level: string | null;
+  degree: string | null;
+  emergency_contact_name: string | null;
+};
+
+export type PortalWorkSnapshot = {
+  department_name: string | null;
+  position: string | null;
+  modality: string | null;
+  schedule: string | null;
+  salary: string | null;
+  contract_type: string | null;
+  contract_start: string | null;
+  contract_end: string | null;
+  status: string | null;
+  manager_name: string | null;
+  vacation_days_per_year: number | null;
+};
+
 export type PortalContact = {
   corporate_email: string | null;
   phone: string | null;
@@ -359,6 +383,15 @@ export type PortalContact = {
   bank: string | null;
   bank_account: string | null;
   pension_fund: string | null;
+  personal: PortalPersonalSnapshot;
+  work: PortalWorkSnapshot;
+  has_employee_photo_file: boolean;
+};
+
+export type PortalEmployeeDocumentRow = {
+  id: number;
+  type: string;
+  filename: string;
 };
 
 export type PortalContactEnvelope = {
@@ -379,6 +412,50 @@ export type VacationBalanceEnvelope = {
 
 export async function fetchPortalContact() {
   return apiRequest<PortalContactEnvelope>("/portal/contact");
+}
+
+export async function fetchPortalDocuments() {
+  return apiRequest<{ data: PortalEmployeeDocumentRow[] }>("/portal/documents");
+}
+
+export async function downloadPortalEmployeeDocumentBlob(documentId: number): Promise<Blob> {
+  const headers = new Headers();
+  const token = getAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(buildApiUrl(`/portal/documents/${documentId}/file?attachment=1`), { headers });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { message: text || res.statusText };
+    }
+    throw new ApiHttpError(res.status, parsed);
+  }
+  return res.blob();
+}
+
+export async function fetchPortalEmployeePhotoBlob(): Promise<Blob> {
+  const headers = new Headers();
+  const token = getAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(buildApiUrl("/portal/employee-photo"), { headers });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { message: text || res.statusText };
+    }
+    throw new ApiHttpError(res.status, parsed);
+  }
+  return res.blob();
 }
 
 export async function patchPortalContact(body: {
