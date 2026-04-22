@@ -893,6 +893,111 @@ export interface paths {
         };
         trace?: never;
     };
+    "/employees/{id}/deduction-installment-plans/{plan}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["idPath"];
+                plan: number;
+            };
+            cookie?: never;
+        };
+        /** Download deduction plan evidence file */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                    plan: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description File stream */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        /** Upload deduction plan evidence (PDF or image) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                    plan: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeductionInstallmentPlanEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        /** Remove deduction plan evidence file */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["idPath"];
+                    plan: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeductionInstallmentPlanEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/employees/{id}/termination": {
         parameters: {
             query?: never;
@@ -1964,6 +2069,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payslips/preview-income-tax-fifth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview 5th category income tax retention (reference v1, no persistence)
+         * @description Simplified annual projection (gross monthly × 12), 7 UIT deduction, progressive marginal rates on excess in UIT bands. UIT from legal parameters at payroll period end-of-month. Does not write payslips; RRHH adds the line explicitly.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IncomeTaxFifthPreviewWrite"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IncomeTaxFifthPreviewEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                422: components["responses"]["ValidationError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payslips/preview-attendance-deductions": {
         parameters: {
             query?: never;
@@ -1975,7 +2126,7 @@ export interface paths {
         put?: never;
         /**
          * Suggest absence and lateness deduction amounts from attendance
-         * @description Counts unjustified absences and tardiness in the payroll month; suggests PEN amounts from gross (proportional).
+         * @description Counts attendance in the payroll month. Suggested PEN amounts use gross when provided (proportional); unjustified absence (falta_nj) and unjustified tardiness (tardanza_nj) only. Justified statuses and vacaciones/recuperacion/asistido are informational counts only. Does not persist payslips or installment plans.
          */
         post: {
             parameters: {
@@ -2658,7 +2809,6 @@ export interface components {
             contract_end?: string | null;
             status: components["schemas"]["EmployeeStatus"];
             photo_path?: string | null;
-            linked_user_avatar_path?: string | null;
             /** Format: date-time */
             created_at?: string | null;
             /** Format: date-time */
@@ -2947,7 +3097,7 @@ export interface components {
             /** @enum {string} */
             status: "ok" | "unsupported_regime" | "missing_legal_rate";
             pension_fund_original?: string | null;
-            /** @description Resolved regime slug (onp, afp_integra, afp_prima) or unsupported. */
+            /** @description Resolved regime slug (onp, afp_integra, afp_prima, afp_profuturo, afp_habitat) or unsupported. */
             regime_resolved: string;
             legal_parameter_key?: string | null;
             ratio?: string | null;
@@ -2959,6 +3109,39 @@ export interface components {
         };
         PrevisionalPreviewEnvelope: {
             data: components["schemas"]["PrevisionalPreviewData"];
+        };
+        IncomeTaxFifthPreviewWrite: {
+            payroll_period_id: number;
+            /** @description Monthly gross for projection. */
+            gross_amount: number;
+        };
+        IncomeTaxFifthBracketApplied: {
+            /** @description Lower bound of bracket on cumulative UIT scale after 7 UIT exemption. */
+            from_uit: number;
+            /** @description Upper bound of bracket on cumulative UIT scale (conceptual). */
+            to_uit: number;
+            rate: string;
+            base_amount: string;
+            tax_amount: string;
+        };
+        IncomeTaxFifthPreviewData: {
+            /** @enum {string} */
+            status: "ok" | "missing_uit" | "invalid_gross";
+            /** Format: date */
+            reference_date: string;
+            calculation_version: string;
+            uit_pen?: string | null;
+            annual_projected_gross: string;
+            deduction_7_uit_amount?: string | null;
+            taxable_annual_base?: string | null;
+            tax_brackets_applied: components["schemas"]["IncomeTaxFifthBracketApplied"][];
+            annual_tax?: string | null;
+            monthly_suggested_retention?: string | null;
+            effective_rate?: string | null;
+            proposed_deduction_line?: components["schemas"]["PayslipBreakdownLine"] | null;
+        };
+        IncomeTaxFifthPreviewEnvelope: {
+            data: components["schemas"]["IncomeTaxFifthPreviewData"];
         };
         /** @description Stored under meta.payslip_breakdown. Coexists with meta.legal_parameters_context (server-set). Line amounts are informational until automated legal calculations exist. */
         PayslipBreakdown: {
@@ -3011,7 +3194,8 @@ export interface components {
         AttendanceDeductionPreviewWrite: {
             employee_id: number;
             payroll_period_id: number;
-            gross_amount: number;
+            /** @description Optional monthly gross for PEN suggestions; omit or zero for counts-only preview. */
+            gross_amount?: number | null;
         };
         AttendanceDeductionPreviewData: {
             /** Format: date */
@@ -3019,20 +3203,37 @@ export interface components {
             /** Format: date */
             period_to: string;
             absence_days_unjustified: number;
-            tardiness_events: number;
+            absence_days_justified: number;
+            tardiness_events_unjustified: number;
+            tardiness_events_justified: number;
             tardiness_deficit_minutes: number;
+            vacation_records: number;
+            recuperacion_records: number;
+            asistido_records: number;
             full_time_daily_minutes: number;
             suggested_deduction_absence: number;
             suggested_deduction_lateness: number;
+            suggested_amounts_computed: boolean;
+            gross_amount_basis: number;
             formula_note: string;
         };
         AttendanceDeductionPreviewEnvelope: {
             data: components["schemas"]["AttendanceDeductionPreviewData"];
         };
+        DeductionInstallmentPlanAssetSummary: {
+            id: number;
+            type: string;
+            brand?: string | null;
+            model?: string | null;
+            serial_number?: string | null;
+        };
         DeductionInstallmentPlan: {
             id: number;
             employee_id: number;
             label: string;
+            /** @enum {string|null} */
+            category?: "damage_equipment" | "salary_advance" | "loan" | "other" | null;
+            description?: string | null;
             total_amount: string;
             installment_count: number;
             installment_amount: string;
@@ -3040,6 +3241,10 @@ export interface components {
             status: string;
             start_payroll_period_id?: number | null;
             notes?: string | null;
+            has_evidence: boolean;
+            asset_id?: number | null;
+            asset?: (components["schemas"]["DeductionInstallmentPlanAssetSummary"] | null) | null;
+            remaining_total_amount: string;
             next_installment_number?: number | null;
             next_installment_amount?: string | null;
             /** Format: date-time */
@@ -3049,14 +3254,22 @@ export interface components {
         };
         DeductionInstallmentPlanWrite: {
             label: string;
+            /** @enum {string|null} */
+            category?: "damage_equipment" | "salary_advance" | "loan" | "other" | null;
+            description?: string | null;
             total_amount: number;
             installment_count: number;
             start_payroll_period_id?: number | null;
             notes?: string | null;
+            asset_id?: number | null;
         };
         DeductionInstallmentPlanPatch: {
             label?: string;
+            /** @enum {string|null} */
+            category?: "damage_equipment" | "salary_advance" | "loan" | "other" | null;
+            description?: string | null;
             notes?: string | null;
+            asset_id?: number | null;
             /** @enum {string} */
             status?: "active" | "cancelled";
         };
@@ -3074,7 +3287,7 @@ export interface components {
             net_amount: number;
             status?: string;
             /**
-             * @description When true, server merges a previsional deduction line into meta.payslip_breakdown from legal parameters (same logic as preview-previsional). Returns 422 if regime unsupported or rate missing. Does not change gross/deductions/net columns.
+             * @description When true, server merges a previsional deduction line into meta.payslip_breakdown from legal parameters (same logic as preview-previsional). Returns 422 if regime unsupported or rate missing. If deduction lines exist after merge, deductions_amount and net_amount are aligned with the sum of lines.
              * @default false
              */
             apply_previsional_assist: boolean;
@@ -3212,9 +3425,6 @@ export interface components {
             department_id?: number | null;
         };
         UserAdminUpdate: {
-            name: string;
-            /** Format: email */
-            email: string;
             role_id: number;
             department_id?: number | null;
             password?: string | null;
@@ -3250,6 +3460,11 @@ export interface components {
             /** Format: date */
             effective_to?: string | null;
             value_id?: number | null;
+            /**
+             * Format: date
+             * @description Latest vigencia start date registered for this parameter (max effective_from).
+             */
+            latest_effective_from?: string | null;
         };
         LegalParametersListEnvelope: {
             data: components["schemas"]["LegalParameterListItem"][];
@@ -3262,6 +3477,8 @@ export interface components {
             effective_from: string;
             /** Format: date */
             effective_to?: string | null;
+            /** @description Optional. When sent, stores traceability text in legal_parameter_values.notes (manual vigencia / source). */
+            source_note?: string | null;
         };
         LegalParameterEnvelope: {
             data: components["schemas"]["LegalParameterListItem"];

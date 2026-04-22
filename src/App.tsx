@@ -16,6 +16,7 @@ import NewEmployeePage from "./pages/NewEmployeePage";
 import EditEmployeePage from "./pages/EditEmployeePage";
 import AttendancePage from "./pages/AttendancePage";
 import PayrollPage from "./pages/PayrollPage";
+import DeductionsPage from "./pages/DeductionsPage";
 import EmployeePortalPage from "./pages/EmployeePortalPage";
 import ResignationRequestsPage from "./pages/ResignationRequestsPage";
 import AssetsPage from "./pages/AssetsPage";
@@ -97,6 +98,14 @@ const App = () => (
                 element={
                   <RequirePermission permission="payroll.view">
                     <PayrollPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/descuentos"
+                element={
+                  <RequirePermission permission="payroll.view">
+                    <DeductionsPage />
                   </RequirePermission>
                 }
               />

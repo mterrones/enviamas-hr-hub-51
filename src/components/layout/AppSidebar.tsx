@@ -17,6 +17,7 @@ import {
   Laptop,
   User,
   Bell,
+  Percent,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,6 +34,7 @@ const navItemsBeforePortal: NavLinkItem[] = [
   { label: "Empleados", icon: Users, path: "/empleados", permission: "employees.view" },
   { label: "Asistencia", icon: CalendarCheck, path: "/asistencia", permission: "attendance.view" },
   { label: "Boletas y Nómina", icon: FileText, path: "/boletas", permission: "payroll.view" },
+  { label: "Descuentos", icon: Percent, path: "/descuentos", permission: "payroll.view" },
 ];
 
 const portalSingleItem: NavLinkItem = {

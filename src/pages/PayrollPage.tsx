@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type MouseEvent, type SetStateAction } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Download, Send, Plus, Pencil, Trash2, CheckCircle2, ClipboardList } from "lucide-react";
+import { FileText, Download, Send, Plus, Pencil, Trash2, CheckCircle2, ClipboardList, ExternalLink } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
@@ -35,6 +36,7 @@ import {
   downloadPayrollSummaryXlsx,
   fetchPayrollPeriods,
   fetchAllPayslipsForPeriod,
+  fetchIncomeTaxFifthPreview,
   fetchPrevisionalPreview,
   previewAttendanceDeductions,
   applyPrevisionalToPayslip,
@@ -42,6 +44,7 @@ import {
   createDeductionInstallmentPlan,
   type Payslip,
   type PayrollPeriod,
+  type IncomeTaxFifthPreviewData,
   type PrevisionalPreviewData,
   type DeductionInstallmentPlan,
 } from "@/api/payroll";
@@ -52,6 +55,13 @@ import {
   deductionLinesFromPayslipMeta,
   buildPayslipBreakdownMeta,
 } from "@/lib/payrollDeductionHelpers";
+import {
+  appendAbsenceSuggestionFromPreview,
+  appendLatenessSuggestionFromPreview,
+  ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE,
+  ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS,
+  type AttendancePreviewMergeInput,
+} from "@/lib/attendanceDeductionPayslipHelpers";
 import { ListPaginationBar } from "@/components/ListPaginationBar";
 import { DEFAULT_LIST_PAGE_SIZE } from "@/constants/pagination";
 import { formatEmployeeName } from "@/lib/employeeName";
@@ -59,6 +69,7 @@ import { formatAppDate, formatAppMonthYear } from "@/lib/formatAppDate";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { formatRatioPercent, regimeResolvedLabel } from "@/lib/previsionalDisplay";
 
 const meses = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
@@ -74,26 +85,35 @@ function formatPen(amount: string | number): string {
   return `S/ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function regimeResolvedLabel(regime: string): string {
-  switch (regime) {
-    case "onp":
-      return "ONP";
-    case "afp_integra":
-      return "AFP Integra";
-    case "afp_prima":
-      return "AFP Prima";
-    case "unsupported":
-      return "No soportado";
-    default:
-      return regime;
-  }
+function installmentLineCodeForPlan(planId: number): string {
+  return `installment:${planId}`;
 }
 
-function formatRatioPercent(ratio: string | null | undefined): string {
-  if (ratio == null || ratio === "") return "—";
-  const n = Number.parseFloat(ratio);
-  if (Number.isNaN(n)) return ratio;
-  return `${(n * 100).toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}%`;
+function draftHasInstallmentForPlan(lines: DeductionLineDraft[], planId: number): boolean {
+  return lines.some((l) => l.code === installmentLineCodeForPlan(planId));
+}
+
+function isPrevisionalDeductionCode(code: string): boolean {
+  return code === "previsional" || code.startsWith("previsional_");
+}
+
+function draftHasPrevisionalLine(lines: DeductionLineDraft[]): boolean {
+  return lines.some((l) => isPrevisionalDeductionCode(l.code));
+}
+
+function draftHasIncomeTaxLine(lines: DeductionLineDraft[]): boolean {
+  return lines.some((l) => l.code === "income_tax" || l.code === "income_tax_5th");
+}
+
+function deductionPlanCategoryLabelEs(category: string | null | undefined): string {
+  if (!category) return "";
+  const m: Record<string, string> = {
+    damage_equipment: "Daño a equipo",
+    salary_advance: "Adelanto de sueldo",
+    loan: "Préstamo",
+    other: "Otro",
+  };
+  return m[category] ?? category;
 }
 
 function payrollMutationErrorMessage(err: unknown): string {
@@ -182,6 +202,16 @@ export default function PayrollPage() {
   const [newPlanTotal, setNewPlanTotal] = useState("");
   const [newPlanMonths, setNewPlanMonths] = useState("");
   const [newPlanSaving, setNewPlanSaving] = useState(false);
+  const [createPayslipPrevisional, setCreatePayslipPrevisional] = useState<PrevisionalPreviewData | null>(null);
+  const [createPayslipPrevisionalLoading, setCreatePayslipPrevisionalLoading] = useState(false);
+  const [editPayslipPrevisional, setEditPayslipPrevisional] = useState<PrevisionalPreviewData | null>(null);
+  const [editPayslipPrevisionalLoading, setEditPayslipPrevisionalLoading] = useState(false);
+  const [createAttendancePreview, setCreateAttendancePreview] = useState<AttendancePreviewMergeInput | null>(null);
+  const [editAttendancePreview, setEditAttendancePreview] = useState<AttendancePreviewMergeInput | null>(null);
+  const [createIncomeTaxFifthPreview, setCreateIncomeTaxFifthPreview] = useState<IncomeTaxFifthPreviewData | null>(null);
+  const [createIncomeTaxFifthLoading, setCreateIncomeTaxFifthLoading] = useState(false);
+  const [editIncomeTaxFifthPreview, setEditIncomeTaxFifthPreview] = useState<IncomeTaxFifthPreviewData | null>(null);
+  const [editIncomeTaxFifthLoading, setEditIncomeTaxFifthLoading] = useState(false);
 
   const employeeById = useMemo(() => {
     const m: Record<number, Employee> = {};
@@ -334,6 +364,7 @@ export default function PayrollPage() {
     setNewPlanLabel("");
     setNewPlanTotal("");
     setNewPlanMonths("");
+    setCreateAttendancePreview(null);
     setPayslipDialogOpen(true);
   };
 
@@ -346,6 +377,7 @@ export default function PayrollPage() {
   const handlePayslipEmployeeChange = (value: string) => {
     setPayslipEmployeeId(value);
     setCreateDeductionLines([]);
+    setCreateAttendancePreview(null);
     const id = Number.parseInt(value, 10);
     let grossStr = "";
     if (!Number.isNaN(id)) {
@@ -373,6 +405,143 @@ export default function PayrollPage() {
       applyNetFromGrossDeductions(payslipGross, sum.toFixed(2));
     }
   }, [createDeductionLines, payslipGross, payslipNetTouched]);
+
+  useEffect(() => {
+    if (!payslipDialogOpen || !payslipEmployeeId || !selectedPeriodId) {
+      setCreatePayslipPrevisional(null);
+      return;
+    }
+    const gross = Number.parseFloat(payslipGross.replace(",", ".")) || 0;
+    if (gross <= 0) {
+      setCreatePayslipPrevisional(null);
+      return;
+    }
+    const empId = Number.parseInt(payslipEmployeeId, 10);
+    if (Number.isNaN(empId)) {
+      setCreatePayslipPrevisional(null);
+      return;
+    }
+    let cancelled = false;
+    setCreatePayslipPrevisionalLoading(true);
+    fetchPrevisionalPreview({
+      employee_id: empId,
+      payroll_period_id: Number.parseInt(selectedPeriodId, 10),
+      gross_amount: gross,
+    })
+      .then((r) => {
+        if (!cancelled) setCreatePayslipPrevisional(r.data);
+      })
+      .catch(() => {
+        if (!cancelled) setCreatePayslipPrevisional(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCreatePayslipPrevisionalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payslipDialogOpen, payslipEmployeeId, selectedPeriodId, payslipGross]);
+
+  useEffect(() => {
+    if (!payslipEditDialogOpen || !editPayslipTarget || !selectedPeriodId) {
+      setEditPayslipPrevisional(null);
+      return;
+    }
+    const gross = Number.parseFloat(editPayslipGross.replace(",", ".")) || 0;
+    if (gross <= 0) {
+      setEditPayslipPrevisional(null);
+      return;
+    }
+    let cancelled = false;
+    setEditPayslipPrevisionalLoading(true);
+    fetchPrevisionalPreview({
+      employee_id: editPayslipTarget.employee_id,
+      payroll_period_id: Number.parseInt(selectedPeriodId, 10),
+      gross_amount: gross,
+    })
+      .then((r) => {
+        if (!cancelled) setEditPayslipPrevisional(r.data);
+      })
+      .catch(() => {
+        if (!cancelled) setEditPayslipPrevisional(null);
+      })
+      .finally(() => {
+        if (!cancelled) setEditPayslipPrevisionalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payslipEditDialogOpen, editPayslipTarget, selectedPeriodId, editPayslipGross]);
+
+  useEffect(() => {
+    if (!payslipDialogOpen || !selectedPeriodId) {
+      setCreateIncomeTaxFifthPreview(null);
+      return;
+    }
+    const gross = Number.parseFloat(payslipGross.replace(",", ".")) || 0;
+    if (gross <= 0) {
+      setCreateIncomeTaxFifthPreview(null);
+      return;
+    }
+    const periodId = Number.parseInt(selectedPeriodId, 10);
+    if (Number.isNaN(periodId)) {
+      setCreateIncomeTaxFifthPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setCreateIncomeTaxFifthLoading(true);
+    fetchIncomeTaxFifthPreview({
+      payroll_period_id: periodId,
+      gross_amount: gross,
+    })
+      .then((r) => {
+        if (!cancelled) setCreateIncomeTaxFifthPreview(r.data);
+      })
+      .catch(() => {
+        if (!cancelled) setCreateIncomeTaxFifthPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCreateIncomeTaxFifthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payslipDialogOpen, selectedPeriodId, payslipGross]);
+
+  useEffect(() => {
+    if (!payslipEditDialogOpen || !editPayslipTarget || !selectedPeriodId) {
+      setEditIncomeTaxFifthPreview(null);
+      return;
+    }
+    const gross = Number.parseFloat(editPayslipGross.replace(",", ".")) || 0;
+    if (gross <= 0) {
+      setEditIncomeTaxFifthPreview(null);
+      return;
+    }
+    const periodId = Number.parseInt(selectedPeriodId, 10);
+    if (Number.isNaN(periodId)) {
+      setEditIncomeTaxFifthPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setEditIncomeTaxFifthLoading(true);
+    fetchIncomeTaxFifthPreview({
+      payroll_period_id: periodId,
+      gross_amount: gross,
+    })
+      .then((r) => {
+        if (!cancelled) setEditIncomeTaxFifthPreview(r.data);
+      })
+      .catch(() => {
+        if (!cancelled) setEditIncomeTaxFifthPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setEditIncomeTaxFifthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payslipEditDialogOpen, editPayslipTarget, selectedPeriodId, editPayslipGross]);
 
   const handlePayslipNetChange = (value: string) => {
     setPayslipNetTouched(true);
@@ -453,6 +622,7 @@ export default function PayrollPage() {
     void fetchDeductionInstallmentPlans(p.employee_id, { status: "active" })
       .then((r) => setEditInstallmentPlans(r.data))
       .catch(() => setEditInstallmentPlans([]));
+    setEditAttendancePreview(null);
     setPayslipEditDialogOpen(true);
   };
 
@@ -523,13 +693,26 @@ export default function PayrollPage() {
     }
   };
 
-  const appendInstallmentLine = (plan: DeductionInstallmentPlan, setLines: Dispatch<SetStateAction<DeductionLineDraft[]>>) => {
+  const appendInstallmentLine = (
+    plan: DeductionInstallmentPlan,
+    currentLines: DeductionLineDraft[],
+    setLines: Dispatch<SetStateAction<DeductionLineDraft[]>>,
+  ) => {
+    if (draftHasInstallmentForPlan(currentLines, plan.id)) {
+      toast({
+        title: "Cuota ya en esta boleta",
+        description:
+          "Este plan ya tiene una línea de cuota en el desglose. Quita esa línea si quieres cambiar el monto o vuelve a intentarlo tras eliminarla.",
+        variant: "destructive",
+      });
+      return;
+    }
     const nextAmt = plan.next_installment_amount ?? plan.installment_amount;
     const nextNum = plan.next_installment_number ?? plan.installments_applied + 1;
-    setLines((prev) => [
-      ...prev,
+    setLines([
+      ...currentLines,
       newDeductionLine({
-        code: `installment:${plan.id}`,
+        code: installmentLineCodeForPlan(plan.id),
         label: `${plan.label} (cuota ${nextNum}/${plan.installment_count})`,
         amount: String(nextAmt),
       }),
@@ -571,7 +754,57 @@ export default function PayrollPage() {
     }
   };
 
-  const handleAttendanceSuggestionCreate = async () => {
+  const handleCreateInstallmentPlanFromEdit = async () => {
+    if (!editPayslipTarget) return;
+    const empId = editPayslipTarget.employee_id;
+    const total = Number.parseFloat(newPlanTotal.replace(",", ".")) || 0;
+    const months = Number.parseInt(newPlanMonths, 10);
+    if (total < 0.01 || months < 1) {
+      toast({ title: "Datos inválidos", description: "Indica monto total y cantidad de meses.", variant: "destructive" });
+      return;
+    }
+    setNewPlanSaving(true);
+    try {
+      const res = await createDeductionInstallmentPlan(empId, {
+        label: newPlanLabel.trim() || "Préstamo / descuento",
+        total_amount: total,
+        installment_count: months,
+      });
+      setEditInstallmentPlans((prev) => [res.data, ...prev]);
+      setNewPlanLabel("");
+      setNewPlanTotal("");
+      setNewPlanMonths("");
+      toast({ title: "Plan creado", description: "Puedes aplicar la cuota en esta boleta." });
+    } catch (err) {
+      toast({
+        title: "No se pudo crear el plan",
+        description: payrollMutationErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setNewPlanSaving(false);
+    }
+  };
+
+  const toastAttendancePreviewRefreshed = (data: AttendancePreviewMergeInput) => {
+    if (!data.suggested_amounts_computed) {
+      toast({ title: "Sin montos", description: "Se necesita bruto mayor a cero.", variant: "destructive" });
+      return;
+    }
+    const hasAbs = data.suggested_deduction_absence > 0;
+    const hasLat = data.suggested_deduction_lateness > 0;
+    if (!hasAbs && !hasLat) {
+      const hasInc = data.absence_days_unjustified > 0 || data.tardiness_events_unjustified > 0;
+      toast({
+        title: hasInc ? "Sin monto sugerido" : "Sin incidencias NJ",
+        description: hasInc ? "No hay importe calculado para faltas o tardanzas en este preview." : "No hay líneas que añadir.",
+      });
+      return;
+    }
+    toast({ title: "Sugerencias actualizadas", description: "Usá Añadir línea en cada fila que corresponda." });
+  };
+
+  const handleFetchAttendancePreviewCreate = async () => {
     if (!selectedPeriodId || !payslipEmployeeId) {
       toast({ title: "Datos incompletos", description: "Selecciona empleado y periodo.", variant: "destructive" });
       return;
@@ -584,33 +817,8 @@ export default function PayrollPage() {
         payroll_period_id: Number(selectedPeriodId),
         gross_amount: gross,
       });
-      setCreateDeductionLines((prev) => {
-        const rest = prev.filter((l) => l.code !== "absence_suggested" && l.code !== "lateness_suggested");
-        const add: DeductionLineDraft[] = [...rest];
-        if (res.data.suggested_deduction_absence > 0) {
-          add.push(
-            newDeductionLine({
-              code: "absence_suggested",
-              label: "Inasistencias (sugerido)",
-              amount: res.data.suggested_deduction_absence.toFixed(2),
-            }),
-          );
-        }
-        if (res.data.suggested_deduction_lateness > 0) {
-          add.push(
-            newDeductionLine({
-              code: "lateness_suggested",
-              label: "Tardanzas (sugerido)",
-              amount: res.data.suggested_deduction_lateness.toFixed(2),
-            }),
-          );
-        }
-        return add;
-      });
-      toast({
-        title: "Sugerencia de asistencia",
-        description: `${res.data.absence_days_unjustified} falta(s) NJ · ${res.data.tardiness_events} tardanza(s). Revisa montos antes de guardar.`,
-      });
+      setCreateAttendancePreview(res.data);
+      toastAttendancePreviewRefreshed(res.data);
     } catch (err) {
       toast({
         title: "No se pudo calcular",
@@ -622,7 +830,7 @@ export default function PayrollPage() {
     }
   };
 
-  const handleAttendanceSuggestionEdit = async () => {
+  const handleFetchAttendancePreviewEdit = async () => {
     if (!editPayslipTarget || !selectedPeriodId) return;
     setAttendancePreviewBusy(true);
     try {
@@ -632,33 +840,8 @@ export default function PayrollPage() {
         payroll_period_id: Number(selectedPeriodId),
         gross_amount: gross,
       });
-      setEditDeductionLines((prev) => {
-        const rest = prev.filter((l) => l.code !== "absence_suggested" && l.code !== "lateness_suggested");
-        const add: DeductionLineDraft[] = [...rest];
-        if (res.data.suggested_deduction_absence > 0) {
-          add.push(
-            newDeductionLine({
-              code: "absence_suggested",
-              label: "Inasistencias (sugerido)",
-              amount: res.data.suggested_deduction_absence.toFixed(2),
-            }),
-          );
-        }
-        if (res.data.suggested_deduction_lateness > 0) {
-          add.push(
-            newDeductionLine({
-              code: "lateness_suggested",
-              label: "Tardanzas (sugerido)",
-              amount: res.data.suggested_deduction_lateness.toFixed(2),
-            }),
-          );
-        }
-        return add;
-      });
-      toast({
-        title: "Sugerencia de asistencia",
-        description: `Faltas NJ: ${res.data.absence_days_unjustified} · Tardanzas: ${res.data.tardiness_events}.`,
-      });
+      setEditAttendancePreview(res.data);
+      toastAttendancePreviewRefreshed(res.data);
     } catch (err) {
       toast({
         title: "No se pudo calcular",
@@ -668,6 +851,192 @@ export default function PayrollPage() {
     } finally {
       setAttendancePreviewBusy(false);
     }
+  };
+
+  const handleAddAbsenceLineCreate = () => {
+    if (!createAttendancePreview) {
+      toast({ title: "Sin datos", description: "Pulsa «Actualizar sugerencias» antes.", variant: "destructive" });
+      return;
+    }
+    const r = appendAbsenceSuggestionFromPreview(createDeductionLines, createAttendancePreview);
+    if (!r.added) {
+      if (createDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE)) {
+        toast({ title: "Ya agregado", description: "Esta línea ya está en el desglose.", variant: "destructive" });
+      } else {
+        toast({ title: "No aplica", description: "No hay monto sugerido para faltas en el último preview." });
+      }
+      return;
+    }
+    setCreateDeductionLines(r.lines);
+    toast({ title: "Línea añadida" });
+  };
+
+  const handleAddLatenessLineCreate = () => {
+    if (!createAttendancePreview) {
+      toast({ title: "Sin datos", description: "Pulsa «Actualizar sugerencias» antes.", variant: "destructive" });
+      return;
+    }
+    const r = appendLatenessSuggestionFromPreview(createDeductionLines, createAttendancePreview);
+    if (!r.added) {
+      if (createDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS)) {
+        toast({ title: "Ya agregado", description: "Esta línea ya está en el desglose.", variant: "destructive" });
+      } else {
+        toast({ title: "No aplica", description: "No hay monto sugerido para tardanzas en el último preview." });
+      }
+      return;
+    }
+    setCreateDeductionLines(r.lines);
+    toast({ title: "Línea añadida" });
+  };
+
+  const handleAddAbsenceLineEdit = () => {
+    if (!editAttendancePreview) {
+      toast({ title: "Sin datos", description: "Pulsa «Actualizar sugerencias» antes.", variant: "destructive" });
+      return;
+    }
+    const r = appendAbsenceSuggestionFromPreview(editDeductionLines, editAttendancePreview);
+    if (!r.added) {
+      if (editDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE)) {
+        toast({ title: "Ya agregado", description: "Esta línea ya está en el desglose.", variant: "destructive" });
+      } else {
+        toast({ title: "No aplica", description: "No hay monto sugerido para faltas en el último preview." });
+      }
+      return;
+    }
+    setEditDeductionLines(r.lines);
+    toast({ title: "Línea añadida" });
+  };
+
+  const handleAddLatenessLineEdit = () => {
+    if (!editAttendancePreview) {
+      toast({ title: "Sin datos", description: "Pulsa «Actualizar sugerencias» antes.", variant: "destructive" });
+      return;
+    }
+    const r = appendLatenessSuggestionFromPreview(editDeductionLines, editAttendancePreview);
+    if (!r.added) {
+      if (editDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS)) {
+        toast({ title: "Ya agregado", description: "Esta línea ya está en el desglose.", variant: "destructive" });
+      } else {
+        toast({ title: "No aplica", description: "No hay monto sugerido para tardanzas en el último preview." });
+      }
+      return;
+    }
+    setEditDeductionLines(r.lines);
+    toast({ title: "Línea añadida" });
+  };
+
+  const handleAddIncomeTaxFifthLineCreate = () => {
+    const d = createIncomeTaxFifthPreview;
+    if (!d || d.status !== "ok" || !d.proposed_deduction_line) {
+      toast({
+        title: "Sin sugerencia",
+        description:
+          d?.status === "missing_uit"
+            ? "No hay UIT vigente en parámetros legales para la fecha del período."
+            : "No hay retención sugerida para estos datos.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (draftHasIncomeTaxLine(createDeductionLines)) {
+      toast({
+        title: "Renta ya agregada",
+        description: "Quitá la línea de renta en el desglose aplicado.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const pl = d.proposed_deduction_line;
+    setCreateDeductionLines((prev) => [
+      ...prev,
+      newDeductionLine({
+        code: pl.code,
+        label: pl.label,
+        amount: pl.amount.toFixed(2),
+      }),
+    ]);
+    toast({ title: "Línea añadida", description: "Podés editar el importe antes de crear la boleta." });
+  };
+
+  const handleAddIncomeTaxFifthLineEdit = () => {
+    const d = editIncomeTaxFifthPreview;
+    if (!d || d.status !== "ok" || !d.proposed_deduction_line) {
+      toast({
+        title: "Sin sugerencia",
+        description:
+          d?.status === "missing_uit"
+            ? "No hay UIT vigente en parámetros legales para la fecha del período."
+            : "No hay retención sugerida para estos datos.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (draftHasIncomeTaxLine(editDeductionLines)) {
+      toast({
+        title: "Renta ya agregada",
+        description: "Quitá la línea de renta en el desglose aplicado.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const pl = d.proposed_deduction_line;
+    setEditDeductionLines((prev) => [
+      ...prev,
+      newDeductionLine({
+        code: pl.code,
+        label: pl.label,
+        amount: pl.amount.toFixed(2),
+      }),
+    ]);
+    toast({ title: "Línea añadida", description: "Podés editar el importe antes de guardar." });
+  };
+
+  const handleAddPrevisionalLineCreate = () => {
+    if (!createPayslipPrevisional || createPayslipPrevisional.status !== "ok" || !createPayslipPrevisional.proposed_deduction_line) {
+      return;
+    }
+    if (draftHasPrevisionalLine(createDeductionLines)) {
+      toast({
+        title: "Ya hay AFP/ONP en el desglose",
+        description: "Quitá la línea previsional existente antes de añadir otra.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const pl = createPayslipPrevisional.proposed_deduction_line;
+    setCreateDeductionLines((prev) => [
+      ...prev,
+      newDeductionLine({
+        code: pl.code,
+        label: pl.label,
+        amount: pl.amount.toFixed(2),
+      }),
+    ]);
+    toast({ title: "Línea añadida", description: "Podés editar el importe en el desglose antes de crear la boleta." });
+  };
+
+  const handleAddPrevisionalLineEdit = () => {
+    if (!editPayslipPrevisional || editPayslipPrevisional.status !== "ok" || !editPayslipPrevisional.proposed_deduction_line) {
+      return;
+    }
+    if (draftHasPrevisionalLine(editDeductionLines)) {
+      toast({
+        title: "Ya hay AFP/ONP en el desglose",
+        description: "Quitá la línea previsional existente antes de añadir otra.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const pl = editPayslipPrevisional.proposed_deduction_line;
+    setEditDeductionLines((prev) => [
+      ...prev,
+      newDeductionLine({
+        code: pl.code,
+        label: pl.label,
+        amount: pl.amount.toFixed(2),
+      }),
+    ]);
+    toast({ title: "Línea añadida", description: "Podés editar el importe en el desglose antes de guardar." });
   };
 
   const handleApplyPrevisionalEdit = async () => {
@@ -1466,7 +1835,7 @@ export default function PayrollPage() {
       </Dialog>
 
       <Dialog open={payslipDialogOpen} onOpenChange={setPayslipDialogOpen}>
-        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nueva boleta</DialogTitle>
           </DialogHeader>
@@ -1517,82 +1886,342 @@ export default function PayrollPage() {
                   <ClipboardList className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm font-medium">Descuentos (desglose)</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setCreateDeductionLines((prev) => [
-                        ...prev,
-                        newDeductionLine({
-                          code: "income_tax",
-                          label: "Impuesto a la renta / 5ta categoría",
-                          amount: "0",
-                        }),
-                      ])
-                    }
-                  >
-                    + Renta
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setCreateDeductionLines((prev) => [
-                        ...prev,
-                        newDeductionLine({ code: "other", label: "Otro descuento", amount: "0" }),
-                      ])
-                    }
-                  >
-                    + Otro
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={!payslipEmployeeId || !selectedPeriodId || attendancePreviewBusy}
-                    onClick={() => void handleAttendanceSuggestionCreate()}
-                  >
-                    {attendancePreviewBusy ? "…" : "Sugerencia asistencia"}
-                  </Button>
-                </div>
-                {createInstallmentPlans.length > 0 ? (
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Planes de cuotas activos</p>
-                    <div className="flex flex-wrap gap-2">
-                      {createInstallmentPlans.map((pl) => (
+                <p className="text-sm text-muted-foreground">
+                  Selecciona las líneas que deseas aplicar. Podrás editar los importes antes de crear la boleta.
+                </p>
+
+                {!payslipEmployeeId ? (
+                  <p className="text-sm text-muted-foreground">Selecciona un empleado para ver descuentos disponibles.</p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground">Descuentos disponibles</span>
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
-                          key={pl.id}
                           type="button"
                           size="sm"
-                          variant="outline"
-                          className="text-xs h-8"
-                          onClick={() => appendInstallmentLine(pl, setCreateDeductionLines)}
+                          variant="secondary"
+                          className="h-8 text-xs"
+                          disabled={!selectedPeriodId || attendancePreviewBusy}
+                          title="Obtiene montos sugeridos de faltas y tardanzas sin añadirlos al desglose."
+                          onClick={() => void handleFetchAttendancePreviewCreate()}
                         >
-                          Cuota: {pl.label} ({formatPen(pl.next_installment_amount ?? pl.installment_amount)})
+                          {attendancePreviewBusy ? "…" : "Actualizar sugerencias"}
                         </Button>
-                      ))}
+                        <Link
+                          to={`/descuentos?employee=${payslipEmployeeId}`}
+                          className="text-xs text-primary underline inline-flex items-center gap-1"
+                        >
+                          Gestionar <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label className="text-xs">Nuevo plan (total / meses)</Label>
-                    <div className="flex flex-wrap gap-2">
+
+                    <div className="overflow-x-auto rounded border border-border/60">
+                      <table className="w-full text-xs min-w-[520px]">
+                        <thead>
+                          <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                            <th className="p-2 font-medium w-[14%]">Origen</th>
+                            <th className="p-2 font-medium w-[18%]">Concepto</th>
+                            <th className="p-2 font-medium min-w-[120px]">Detalle</th>
+                            <th className="p-2 font-medium text-right w-[14%] whitespace-nowrap">Monto sugerido</th>
+                            <th className="p-2 font-medium text-right w-[22%]">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-foreground">
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Asistencia</td>
+                            <td className="p-2">Faltas no justif.</td>
+                            <td className="p-2 text-muted-foreground break-words max-w-[200px]">
+                              {createAttendancePreview
+                                ? `${createAttendancePreview.absence_days_unjustified} días NJ`
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right tabular-nums">
+                              {createAttendancePreview?.suggested_amounts_computed
+                                ? createAttendancePreview.suggested_deduction_absence > 0
+                                  ? formatPen(createAttendancePreview.suggested_deduction_absence)
+                                  : "—"
+                                : createAttendancePreview
+                                  ? "Requiere bruto"
+                                  : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  !selectedPeriodId ||
+                                  createDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE) ||
+                                  !createAttendancePreview?.suggested_amounts_computed ||
+                                  (createAttendancePreview?.suggested_deduction_absence ?? 0) <= 0
+                                }
+                                title={
+                                  !createAttendancePreview
+                                    ? "Pulsa Actualizar sugerencias primero."
+                                    : "Añade una línea absence_suggested al desglose."
+                                }
+                                onClick={() => void handleAddAbsenceLineCreate()}
+                              >
+                                {createDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE)
+                                  ? "Ya agregado"
+                                  : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Asistencia</td>
+                            <td className="p-2">Tardanzas no justif.</td>
+                            <td className="p-2 text-muted-foreground break-words max-w-[200px]">
+                              {createAttendancePreview
+                                ? `${createAttendancePreview.tardiness_events_unjustified} eventos NJ`
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right tabular-nums">
+                              {createAttendancePreview?.suggested_amounts_computed
+                                ? createAttendancePreview.suggested_deduction_lateness > 0
+                                  ? formatPen(createAttendancePreview.suggested_deduction_lateness)
+                                  : "—"
+                                : createAttendancePreview
+                                  ? "Requiere bruto"
+                                  : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  !selectedPeriodId ||
+                                  createDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS) ||
+                                  !createAttendancePreview?.suggested_amounts_computed ||
+                                  (createAttendancePreview?.suggested_deduction_lateness ?? 0) <= 0
+                                }
+                                title={
+                                  !createAttendancePreview
+                                    ? "Pulsa Actualizar sugerencias primero."
+                                    : "Añade una línea lateness_suggested al desglose."
+                                }
+                                onClick={() => void handleAddLatenessLineCreate()}
+                              >
+                                {createDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS)
+                                  ? "Ya agregado"
+                                  : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Previsional</td>
+                            <td className="p-2">AFP / ONP</td>
+                            <td className="p-2 text-muted-foreground break-words">
+                              {createPayslipPrevisionalLoading ? (
+                                "…"
+                              ) : !payslipEmployeeId || Number.parseFloat(payslipGross.replace(",", ".")) <= 0 ? (
+                                "Requiere bruto"
+                              ) : createPayslipPrevisional?.status === "unsupported_regime" ? (
+                                <span className="text-amber-800 dark:text-amber-200/90">Régimen no soportado</span>
+                              ) : createPayslipPrevisional?.status === "missing_legal_rate" ? (
+                                <span className="text-amber-800 dark:text-amber-200/90">
+                                  Sin tasa {formatAppDate(createPayslipPrevisional.reference_date)}
+                                </span>
+                              ) : createPayslipPrevisional?.status === "ok" ? (
+                                <>
+                                  {regimeResolvedLabel(createPayslipPrevisional.regime_resolved)} ·{" "}
+                                  {formatRatioPercent(createPayslipPrevisional.ratio)}
+                                </>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="p-2 text-right tabular-nums text-destructive font-medium">
+                              {createPayslipPrevisional?.status === "ok" && createPayslipPrevisional.amount != null
+                                ? formatPen(createPayslipPrevisional.amount)
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  createPayslipPrevisional?.status !== "ok" ||
+                                  !createPayslipPrevisional.proposed_deduction_line ||
+                                  draftHasPrevisionalLine(createDeductionLines)
+                                }
+                                onClick={() => void handleAddPrevisionalLineCreate()}
+                              >
+                                {draftHasPrevisionalLine(createDeductionLines) ? "Ya agregado" : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          {createInstallmentPlans.map((pl) => {
+                            const already = draftHasInstallmentForPlan(createDeductionLines, pl.id);
+                            const nextAmt = pl.next_installment_amount ?? pl.installment_amount;
+                            const nextNum = pl.next_installment_number ?? pl.installments_applied + 1;
+                            const cat = deductionPlanCategoryLabelEs(pl.category);
+                            return (
+                              <tr key={pl.id} className="border-b border-border/50 align-top">
+                                <td className="p-2">Plan cuotas</td>
+                                <td className="p-2 break-words">{pl.label}</td>
+                                <td className="p-2 text-muted-foreground break-words max-w-[200px]">
+                                  {[cat, pl.description?.trim()].filter(Boolean).join(" · ") || "—"}
+                                  <span className="block text-[11px] mt-0.5">
+                                    Cuota {nextNum}/{pl.installment_count} · Pend. {formatPen(pl.remaining_total_amount)}
+                                  </span>
+                                </td>
+                                <td className="p-2 text-right tabular-nums">{formatPen(nextAmt)}</td>
+                                <td className="p-2 text-right">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    disabled={already}
+                                    onClick={() => appendInstallmentLine(pl, createDeductionLines, setCreateDeductionLines)}
+                                  >
+                                    {already ? "Ya agregado" : "Añadir línea"}
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Renta</td>
+                            <td className="p-2">Impuesto a la renta 5ta categoría</td>
+                            <td className="p-2 text-muted-foreground break-words text-[11px] max-w-[220px]">
+                              {createIncomeTaxFifthLoading ? (
+                                "…"
+                              ) : Number.parseFloat(payslipGross.replace(",", ".")) <= 0 ? (
+                                "Requiere bruto"
+                              ) : createIncomeTaxFifthPreview?.status === "missing_uit" ? (
+                                <span className="text-amber-800 dark:text-amber-200/90">Sin UIT en parámetros legales</span>
+                              ) : createIncomeTaxFifthPreview?.status === "ok" ? (
+                                <>
+                                  Proy. anual {formatPen(createIncomeTaxFifthPreview.annual_projected_gross)}
+                                  {createIncomeTaxFifthPreview.deduction_7_uit_amount != null
+                                    ? ` · 7 UIT ${formatPen(createIncomeTaxFifthPreview.deduction_7_uit_amount)}`
+                                    : ""}
+                                  {createIncomeTaxFifthPreview.taxable_annual_base != null
+                                    ? ` · Base ${formatPen(createIncomeTaxFifthPreview.taxable_annual_base)}`
+                                    : ""}
+                                  {createIncomeTaxFifthPreview.effective_rate != null &&
+                                  Number.parseFloat(createIncomeTaxFifthPreview.effective_rate) > 0
+                                    ? ` · Tasa eff. ${(Number.parseFloat(createIncomeTaxFifthPreview.effective_rate) * 100).toFixed(2)}%`
+                                    : ""}
+                                </>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="p-2 text-right tabular-nums">
+                              {createIncomeTaxFifthPreview?.status === "ok" &&
+                              createIncomeTaxFifthPreview.monthly_suggested_retention != null
+                                ? formatPen(createIncomeTaxFifthPreview.monthly_suggested_retention)
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  createIncomeTaxFifthLoading ||
+                                  draftHasIncomeTaxLine(createDeductionLines) ||
+                                  createIncomeTaxFifthPreview?.status !== "ok" ||
+                                  !createIncomeTaxFifthPreview?.proposed_deduction_line
+                                }
+                                title="Sugerencia referencial (v1); editable en el desglose aplicado."
+                                onClick={() => void handleAddIncomeTaxFifthLineCreate()}
+                              >
+                                {draftHasIncomeTaxLine(createDeductionLines) ? "Ya agregado" : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Renta</td>
+                            <td className="p-2">Impuesto renta (manual)</td>
+                            <td
+                              className="p-2 text-muted-foreground"
+                              title="Línea manual; usá la fila superior para sugerencia 5ta categoría."
+                            >
+                              Manual
+                            </td>
+                            <td className="p-2 text-right text-muted-foreground">—</td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={draftHasIncomeTaxLine(createDeductionLines)}
+                                onClick={() => {
+                                  if (draftHasIncomeTaxLine(createDeductionLines)) {
+                                    toast({
+                                      title: "Renta ya agregada",
+                                      description: "Quitá la línea en el desglose aplicado.",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  setCreateDeductionLines((prev) => [
+                                    ...prev,
+                                    newDeductionLine({
+                                      code: "income_tax",
+                                      label: "Impuesto a la renta / 5ta categoría",
+                                      amount: "0",
+                                    }),
+                                  ]);
+                                }}
+                              >
+                                {draftHasIncomeTaxLine(createDeductionLines) ? "Ya agregado" : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="align-top">
+                            <td className="p-2">Otros</td>
+                            <td className="p-2">Otro descuento</td>
+                            <td className="p-2 text-muted-foreground">—</td>
+                            <td className="p-2 text-right text-muted-foreground">—</td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() =>
+                                  setCreateDeductionLines((prev) => [
+                                    ...prev,
+                                    newDeductionLine({ code: "other", label: "Otro descuento", amount: "0" }),
+                                  ])
+                                }
+                              >
+                                Añadir línea
+                              </Button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 items-center text-[11px] text-muted-foreground pt-1">
+                      <span>Nuevo plan:</span>
                       <Input
                         placeholder="Etiqueta"
                         value={newPlanLabel}
                         onChange={(e) => setNewPlanLabel(e.target.value)}
-                        className="h-8 text-sm max-w-[140px]"
+                        className="h-7 text-xs max-w-[120px]"
                       />
                       <Input
                         type="number"
-                        placeholder="Total PEN"
+                        placeholder="Total"
                         value={newPlanTotal}
                         onChange={(e) => setNewPlanTotal(e.target.value)}
-                        className="h-8 text-sm max-w-[100px]"
+                        className="h-7 text-xs max-w-[88px]"
                       />
                       <Input
                         type="number"
@@ -1600,65 +2229,111 @@ export default function PayrollPage() {
                         placeholder="Meses"
                         value={newPlanMonths}
                         onChange={(e) => setNewPlanMonths(e.target.value)}
-                        className="h-8 text-sm max-w-[80px]"
+                        className="h-7 text-xs w-16"
                       />
                       <Button
                         type="button"
                         size="sm"
-                        variant="outline"
-                        disabled={newPlanSaving || !payslipEmployeeId}
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        disabled={newPlanSaving}
                         onClick={() => void handleCreateInstallmentPlan()}
                       >
                         {newPlanSaving ? "…" : "Crear plan"}
                       </Button>
                     </div>
-                  </div>
-                </div>
-                {createDeductionLines.length > 0 ? (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {createDeductionLines.map((line) => (
-                      <div key={line.localId} className="grid grid-cols-12 gap-2 items-center text-sm">
-                        <Input
-                          className="col-span-5 h-8 text-xs"
-                          value={line.label}
-                          onChange={(e) =>
-                            setCreateDeductionLines((prev) =>
-                              prev.map((l) => (l.localId === line.localId ? { ...l, label: e.target.value } : l)),
-                            )
-                          }
-                        />
-                        <Input
-                          type="number"
-                          step="0.01"
-                          className="col-span-3 h-8 text-xs"
-                          value={line.amount}
-                          onChange={(e) =>
-                            setCreateDeductionLines((prev) =>
-                              prev.map((l) => (l.localId === line.localId ? { ...l, amount: e.target.value } : l)),
-                            )
-                          }
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="col-span-1 h-8 w-8 shrink-0 text-destructive"
-                          onClick={() =>
-                            setCreateDeductionLines((prev) => prev.filter((l) => l.localId !== line.localId))
-                          }
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Sin líneas de descuento. Total descuentos: 0.</p>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <Checkbox
+                        id="ps-previsional"
+                        checked={payslipApplyPrevisional}
+                        onCheckedChange={(c) => setPayslipApplyPrevisional(c === true)}
+                      />
+                      <Label
+                        htmlFor="ps-previsional"
+                        className="text-xs font-normal cursor-pointer leading-tight"
+                        title="Al crear la boleta, el servidor puede fusionar AFP/ONP con parámetros legales y unificar códigos previsional_* en meta."
+                      >
+                        Fusionar AFP/ONP al crear la boleta
+                      </Label>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1">
+                      <span className="text-xs font-medium text-foreground">Desglose aplicado</span>
+                      {createDeductionLines.length > 0 ? (
+                        <div className="overflow-x-auto max-h-48 overflow-y-auto rounded border border-border/60">
+                          <table className="w-full text-xs min-w-[400px]">
+                            <thead>
+                              <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                                <th className="p-2 font-medium">Concepto</th>
+                                <th className="p-2 font-medium w-[28%]">Origen / código</th>
+                                <th className="p-2 font-medium text-right w-[22%]">Monto</th>
+                                <th className="p-2 w-9" />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {createDeductionLines.map((line) => (
+                                <tr key={line.localId} className="border-b border-border/50 last:border-0 align-top">
+                                  <td className="p-1.5">
+                                    <Input
+                                      className="h-7 text-xs"
+                                      value={line.label}
+                                      onChange={(e) =>
+                                        setCreateDeductionLines((prev) =>
+                                          prev.map((l) => (l.localId === line.localId ? { ...l, label: e.target.value } : l)),
+                                        )
+                                      }
+                                    />
+                                  </td>
+                                  <td className="p-1.5 font-mono text-[10px] text-muted-foreground break-all">
+                                    {line.code}
+                                  </td>
+                                  <td className="p-1.5 text-right">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      className="h-7 text-xs text-right"
+                                      value={line.amount}
+                                      onChange={(e) =>
+                                        setCreateDeductionLines((prev) =>
+                                          prev.map((l) => (l.localId === line.localId ? { ...l, amount: e.target.value } : l)),
+                                        )
+                                      }
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 shrink-0 text-destructive"
+                                      onClick={() =>
+                                        setCreateDeductionLines((prev) => prev.filter((l) => l.localId !== line.localId))
+                                      }
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Sin líneas aún.</p>
+                      )}
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground">
+                      El total descuenta del bruto y define el neto sugerido (editable abajo).
+                    </p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="ps-ded-total">Total descuentos</Label>
+                      <Input id="ps-ded-total" readOnly value={payslipDeductions} className="bg-muted h-9 text-sm" />
+                    </div>
+                  </>
                 )}
-                <div className="space-y-2">
-                  <Label htmlFor="ps-ded-total">Total descuentos</Label>
-                  <Input id="ps-ded-total" readOnly value={payslipDeductions} className="bg-muted h-9 text-sm" />
-                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ps-net">Neto</Label>
@@ -1677,16 +2352,6 @@ export default function PayrollPage() {
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="ps-previsional"
-                checked={payslipApplyPrevisional}
-                onCheckedChange={(c) => setPayslipApplyPrevisional(c === true)}
-              />
-              <Label htmlFor="ps-previsional" className="text-sm font-normal leading-snug cursor-pointer">
-                Aplicar asistencia previsional al guardar (fusiona línea en meta según parámetros legales)
-              </Label>
-            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setPayslipDialogOpen(false)} disabled={payslipSaving}>
@@ -1703,10 +2368,13 @@ export default function PayrollPage() {
         open={payslipEditDialogOpen}
         onOpenChange={(open) => {
           setPayslipEditDialogOpen(open);
-          if (!open) setEditPayslipTarget(null);
+          if (!open) {
+            setEditPayslipTarget(null);
+            setEditAttendancePreview(null);
+          }
         }}
       >
-        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar boleta</DialogTitle>
           </DialogHeader>
@@ -1738,123 +2406,446 @@ export default function PayrollPage() {
                 />
               </div>
               <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <ClipboardList className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Descuentos (desglose)</span>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={!editPayslipTarget || !selectedPeriodId || attendancePreviewBusy}
-                    onClick={() => void handleAttendanceSuggestionEdit()}
-                  >
-                    {attendancePreviewBusy ? "…" : "Sugerencia asistencia"}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={!editPayslipTarget || editApplyPrevisionalBusy}
-                    onClick={() => void handleApplyPrevisionalEdit()}
-                  >
-                    {editApplyPrevisionalBusy ? "…" : "Aplicar AFP/ONP"}
-                  </Button>
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Descuentos (desglose)</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setEditDeductionLines((prev) => [
-                        ...prev,
-                        newDeductionLine({
-                          code: "income_tax",
-                          label: "Impuesto a la renta / 5ta categoría",
-                          amount: "0",
-                        }),
-                      ])
-                    }
-                  >
-                    + Renta
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setEditDeductionLines((prev) => [
-                        ...prev,
-                        newDeductionLine({ code: "other", label: "Otro descuento", amount: "0" }),
-                      ])
-                    }
-                  >
-                    + Otro
-                  </Button>
-                </div>
-                {editInstallmentPlans.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {editInstallmentPlans.map((pl) => (
-                      <Button
-                        key={pl.id}
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="text-xs h-8"
-                        onClick={() => appendInstallmentLine(pl, setEditDeductionLines)}
-                      >
-                        Cuota: {pl.label} ({formatPen(pl.next_installment_amount ?? pl.installment_amount)})
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-                {editDeductionLines.length > 0 ? (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {editDeductionLines.map((line) => (
-                      <div key={line.localId} className="grid grid-cols-12 gap-2 items-center text-sm">
-                        <Input
-                          className="col-span-5 h-8 text-xs"
-                          value={line.label}
-                          onChange={(e) =>
-                            setEditDeductionLines((prev) =>
-                              prev.map((l) => (l.localId === line.localId ? { ...l, label: e.target.value } : l)),
-                            )
-                          }
-                        />
-                        <Input
-                          type="number"
-                          step="0.01"
-                          className="col-span-3 h-8 text-xs"
-                          value={line.amount}
-                          onChange={(e) =>
-                            setEditDeductionLines((prev) =>
-                              prev.map((l) => (l.localId === line.localId ? { ...l, amount: e.target.value } : l)),
-                            )
-                          }
-                        />
+                <p className="text-sm text-muted-foreground">
+                  Selecciona las líneas que deseas aplicar. Podrás editar los importes antes de guardar.
+                </p>
+
+                {!editPayslipTarget ? (
+                  <p className="text-sm text-muted-foreground">Sin datos de boleta.</p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground">Descuentos disponibles</span>
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="col-span-1 h-8 w-8 shrink-0 text-destructive"
-                          onClick={() =>
-                            setEditDeductionLines((prev) => prev.filter((l) => l.localId !== line.localId))
-                          }
+                          size="sm"
+                          variant="secondary"
+                          className="h-8 text-xs"
+                          disabled={!selectedPeriodId || attendancePreviewBusy}
+                          title="Obtiene montos sugeridos de faltas y tardanzas sin añadirlos al desglose."
+                          onClick={() => void handleFetchAttendancePreviewEdit()}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {attendancePreviewBusy ? "…" : "Actualizar sugerencias"}
                         </Button>
+                        <Link
+                          to={`/descuentos?employee=${editPayslipTarget.employee_id}`}
+                          className="text-xs text-primary underline inline-flex items-center gap-1"
+                        >
+                          Gestionar <ExternalLink className="w-3 h-3" />
+                        </Link>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Sin líneas; total descuentos 0.</p>
+                    </div>
+
+                    <div className="overflow-x-auto rounded border border-border/60">
+                      <table className="w-full text-xs min-w-[520px]">
+                        <thead>
+                          <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                            <th className="p-2 font-medium w-[14%]">Origen</th>
+                            <th className="p-2 font-medium w-[18%]">Concepto</th>
+                            <th className="p-2 font-medium min-w-[120px]">Detalle</th>
+                            <th className="p-2 font-medium text-right w-[14%] whitespace-nowrap">Monto sugerido</th>
+                            <th className="p-2 font-medium text-right w-[24%]">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-foreground">
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Asistencia</td>
+                            <td className="p-2">Faltas no justif.</td>
+                            <td className="p-2 text-muted-foreground break-words max-w-[200px]">
+                              {editAttendancePreview
+                                ? `${editAttendancePreview.absence_days_unjustified} días NJ`
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right tabular-nums">
+                              {editAttendancePreview?.suggested_amounts_computed
+                                ? editAttendancePreview.suggested_deduction_absence > 0
+                                  ? formatPen(editAttendancePreview.suggested_deduction_absence)
+                                  : "—"
+                                : editAttendancePreview
+                                  ? "Requiere bruto"
+                                  : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  !selectedPeriodId ||
+                                  editDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE) ||
+                                  !editAttendancePreview?.suggested_amounts_computed ||
+                                  (editAttendancePreview?.suggested_deduction_absence ?? 0) <= 0
+                                }
+                                onClick={() => void handleAddAbsenceLineEdit()}
+                              >
+                                {editDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_ABSENCE)
+                                  ? "Ya agregado"
+                                  : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Asistencia</td>
+                            <td className="p-2">Tardanzas no justif.</td>
+                            <td className="p-2 text-muted-foreground break-words max-w-[200px]">
+                              {editAttendancePreview
+                                ? `${editAttendancePreview.tardiness_events_unjustified} eventos NJ`
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right tabular-nums">
+                              {editAttendancePreview?.suggested_amounts_computed
+                                ? editAttendancePreview.suggested_deduction_lateness > 0
+                                  ? formatPen(editAttendancePreview.suggested_deduction_lateness)
+                                  : "—"
+                                : editAttendancePreview
+                                  ? "Requiere bruto"
+                                  : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  !selectedPeriodId ||
+                                  editDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS) ||
+                                  !editAttendancePreview?.suggested_amounts_computed ||
+                                  (editAttendancePreview?.suggested_deduction_lateness ?? 0) <= 0
+                                }
+                                onClick={() => void handleAddLatenessLineEdit()}
+                              >
+                                {editDeductionLines.some((l) => l.code === ATTENDANCE_DEDUCTION_LINE_CODE_LATENESS)
+                                  ? "Ya agregado"
+                                  : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Previsional</td>
+                            <td className="p-2">AFP / ONP</td>
+                            <td className="p-2 text-muted-foreground break-words">
+                              {editPayslipPrevisionalLoading ? (
+                                "…"
+                              ) : Number.parseFloat(editPayslipGross.replace(",", ".")) <= 0 ? (
+                                "Requiere bruto"
+                              ) : editPayslipPrevisional?.status === "unsupported_regime" ? (
+                                <span className="text-amber-800 dark:text-amber-200/90">Régimen no soportado</span>
+                              ) : editPayslipPrevisional?.status === "missing_legal_rate" ? (
+                                <span className="text-amber-800 dark:text-amber-200/90">
+                                  Sin tasa {formatAppDate(editPayslipPrevisional.reference_date)}
+                                </span>
+                              ) : editPayslipPrevisional?.status === "ok" ? (
+                                <>
+                                  {regimeResolvedLabel(editPayslipPrevisional.regime_resolved)} ·{" "}
+                                  {formatRatioPercent(editPayslipPrevisional.ratio)}
+                                </>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="p-2 text-right tabular-nums text-destructive font-medium">
+                              {editPayslipPrevisional?.status === "ok" && editPayslipPrevisional.amount != null
+                                ? formatPen(editPayslipPrevisional.amount)
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <div className="flex flex-col gap-1 items-end">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  disabled={
+                                    editPayslipPrevisional?.status !== "ok" ||
+                                    !editPayslipPrevisional.proposed_deduction_line ||
+                                    draftHasPrevisionalLine(editDeductionLines)
+                                  }
+                                  onClick={() => void handleAddPrevisionalLineEdit()}
+                                >
+                                  {draftHasPrevisionalLine(editDeductionLines) ? "Ya agregado" : "Añadir línea"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  className="h-7 text-xs"
+                                  disabled={!editPayslipTarget || editApplyPrevisionalBusy}
+                                  title="Recalcula AFP/ONP en el servidor y actualiza el desglose de la boleta."
+                                  onClick={() => void handleApplyPrevisionalEdit()}
+                                >
+                                  {editApplyPrevisionalBusy ? "…" : "Aplicar AFP/ONP"}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                          {editInstallmentPlans.map((pl) => {
+                            const already = draftHasInstallmentForPlan(editDeductionLines, pl.id);
+                            const nextAmt = pl.next_installment_amount ?? pl.installment_amount;
+                            const nextNum = pl.next_installment_number ?? pl.installments_applied + 1;
+                            const cat = deductionPlanCategoryLabelEs(pl.category);
+                            return (
+                              <tr key={pl.id} className="border-b border-border/50 align-top">
+                                <td className="p-2">Plan cuotas</td>
+                                <td className="p-2 break-words">{pl.label}</td>
+                                <td className="p-2 text-muted-foreground break-words max-w-[200px]">
+                                  {[cat, pl.description?.trim()].filter(Boolean).join(" · ") || "—"}
+                                  <span className="block text-[11px] mt-0.5">
+                                    Cuota {nextNum}/{pl.installment_count} · Pend. {formatPen(pl.remaining_total_amount)}
+                                  </span>
+                                </td>
+                                <td className="p-2 text-right tabular-nums">{formatPen(nextAmt)}</td>
+                                <td className="p-2 text-right">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    disabled={already}
+                                    onClick={() => appendInstallmentLine(pl, editDeductionLines, setEditDeductionLines)}
+                                  >
+                                    {already ? "Ya agregado" : "Añadir línea"}
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Renta</td>
+                            <td className="p-2">Impuesto a la renta 5ta categoría</td>
+                            <td className="p-2 text-muted-foreground break-words text-[11px] max-w-[220px]">
+                              {editIncomeTaxFifthLoading ? (
+                                "…"
+                              ) : Number.parseFloat(editPayslipGross.replace(",", ".")) <= 0 ? (
+                                "Requiere bruto"
+                              ) : editIncomeTaxFifthPreview?.status === "missing_uit" ? (
+                                <span className="text-amber-800 dark:text-amber-200/90">Sin UIT en parámetros legales</span>
+                              ) : editIncomeTaxFifthPreview?.status === "ok" ? (
+                                <>
+                                  Proy. anual {formatPen(editIncomeTaxFifthPreview.annual_projected_gross)}
+                                  {editIncomeTaxFifthPreview.deduction_7_uit_amount != null
+                                    ? ` · 7 UIT ${formatPen(editIncomeTaxFifthPreview.deduction_7_uit_amount)}`
+                                    : ""}
+                                  {editIncomeTaxFifthPreview.taxable_annual_base != null
+                                    ? ` · Base ${formatPen(editIncomeTaxFifthPreview.taxable_annual_base)}`
+                                    : ""}
+                                  {editIncomeTaxFifthPreview.effective_rate != null &&
+                                  Number.parseFloat(editIncomeTaxFifthPreview.effective_rate) > 0
+                                    ? ` · Tasa eff. ${(Number.parseFloat(editIncomeTaxFifthPreview.effective_rate) * 100).toFixed(2)}%`
+                                    : ""}
+                                </>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="p-2 text-right tabular-nums">
+                              {editIncomeTaxFifthPreview?.status === "ok" &&
+                              editIncomeTaxFifthPreview.monthly_suggested_retention != null
+                                ? formatPen(editIncomeTaxFifthPreview.monthly_suggested_retention)
+                                : "—"}
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={
+                                  editIncomeTaxFifthLoading ||
+                                  draftHasIncomeTaxLine(editDeductionLines) ||
+                                  editIncomeTaxFifthPreview?.status !== "ok" ||
+                                  !editIncomeTaxFifthPreview?.proposed_deduction_line
+                                }
+                                title="Sugerencia referencial (v1); editable en el desglose aplicado."
+                                onClick={() => void handleAddIncomeTaxFifthLineEdit()}
+                              >
+                                {draftHasIncomeTaxLine(editDeductionLines) ? "Ya agregado" : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="border-b border-border/50 align-top">
+                            <td className="p-2">Renta</td>
+                            <td className="p-2">Impuesto renta (manual)</td>
+                            <td
+                              className="p-2 text-muted-foreground"
+                              title="Línea manual; usá la fila superior para sugerencia 5ta categoría."
+                            >
+                              Manual
+                            </td>
+                            <td className="p-2 text-right text-muted-foreground">—</td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={draftHasIncomeTaxLine(editDeductionLines)}
+                                onClick={() => {
+                                  if (draftHasIncomeTaxLine(editDeductionLines)) {
+                                    toast({
+                                      title: "Renta ya agregada",
+                                      description: "Quitá la línea en el desglose aplicado.",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  setEditDeductionLines((prev) => [
+                                    ...prev,
+                                    newDeductionLine({
+                                      code: "income_tax",
+                                      label: "Impuesto a la renta / 5ta categoría",
+                                      amount: "0",
+                                    }),
+                                  ]);
+                                }}
+                              >
+                                {draftHasIncomeTaxLine(editDeductionLines) ? "Ya agregado" : "Añadir línea"}
+                              </Button>
+                            </td>
+                          </tr>
+                          <tr className="align-top">
+                            <td className="p-2">Otros</td>
+                            <td className="p-2">Otro descuento</td>
+                            <td className="p-2 text-muted-foreground">—</td>
+                            <td className="p-2 text-right text-muted-foreground">—</td>
+                            <td className="p-2 text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() =>
+                                  setEditDeductionLines((prev) => [
+                                    ...prev,
+                                    newDeductionLine({ code: "other", label: "Otro descuento", amount: "0" }),
+                                  ])
+                                }
+                              >
+                                Añadir línea
+                              </Button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 items-center text-[11px] text-muted-foreground pt-1">
+                      <span>Nuevo plan:</span>
+                      <Input
+                        placeholder="Etiqueta"
+                        value={newPlanLabel}
+                        onChange={(e) => setNewPlanLabel(e.target.value)}
+                        className="h-7 text-xs max-w-[120px]"
+                      />
+                      <Input
+                        type="number"
+                        placeholder="Total"
+                        value={newPlanTotal}
+                        onChange={(e) => setNewPlanTotal(e.target.value)}
+                        className="h-7 text-xs max-w-[88px]"
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Meses"
+                        value={newPlanMonths}
+                        onChange={(e) => setNewPlanMonths(e.target.value)}
+                        className="h-7 text-xs w-16"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        disabled={newPlanSaving}
+                        onClick={() => void handleCreateInstallmentPlanFromEdit()}
+                      >
+                        {newPlanSaving ? "…" : "Crear plan"}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1">
+                      <span className="text-xs font-medium text-foreground">Desglose aplicado</span>
+                      {editDeductionLines.length > 0 ? (
+                        <div className="overflow-x-auto max-h-48 overflow-y-auto rounded border border-border/60">
+                          <table className="w-full text-xs min-w-[400px]">
+                            <thead>
+                              <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                                <th className="p-2 font-medium">Concepto</th>
+                                <th className="p-2 font-medium w-[28%]">Origen / código</th>
+                                <th className="p-2 font-medium text-right w-[22%]">Monto</th>
+                                <th className="p-2 w-9" />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {editDeductionLines.map((line) => (
+                                <tr key={line.localId} className="border-b border-border/50 last:border-0 align-top">
+                                  <td className="p-1.5">
+                                    <Input
+                                      className="h-7 text-xs"
+                                      value={line.label}
+                                      onChange={(e) =>
+                                        setEditDeductionLines((prev) =>
+                                          prev.map((l) => (l.localId === line.localId ? { ...l, label: e.target.value } : l)),
+                                        )
+                                      }
+                                    />
+                                  </td>
+                                  <td className="p-1.5 font-mono text-[10px] text-muted-foreground break-all">
+                                    {line.code}
+                                  </td>
+                                  <td className="p-1.5 text-right">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      className="h-7 text-xs text-right"
+                                      value={line.amount}
+                                      onChange={(e) =>
+                                        setEditDeductionLines((prev) =>
+                                          prev.map((l) => (l.localId === line.localId ? { ...l, amount: e.target.value } : l)),
+                                        )
+                                      }
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 shrink-0 text-destructive"
+                                      onClick={() =>
+                                        setEditDeductionLines((prev) => prev.filter((l) => l.localId !== line.localId))
+                                      }
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Sin líneas aún.</p>
+                      )}
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground">
+                      El total descuenta del bruto y define el neto sugerido (editable abajo).
+                    </p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="ps-edit-ded">Total descuentos</Label>
+                      <Input id="ps-edit-ded" readOnly value={editPayslipDeductions} className="bg-muted h-9 text-sm" />
+                    </div>
+                  </>
                 )}
-                <div className="space-y-2">
-                  <Label htmlFor="ps-edit-ded">Total descuentos</Label>
-                  <Input id="ps-edit-ded" readOnly value={editPayslipDeductions} className="bg-muted h-9 text-sm" />
-                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ps-edit-net">Neto</Label>

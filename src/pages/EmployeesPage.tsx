@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, Plus, Filter, UserMinus } from "lucide-react";
+import { Search, Filter, UserMinus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -195,13 +195,6 @@ export default function EmployeesPage() {
             <Link to="/empleados/renuncias">
               <Button variant="outline" className="gap-2" type="button">
                 <UserMinus className="w-4 h-4" /> Renuncias
-              </Button>
-            </Link>
-          ) : null}
-          {hasPermission("employees.create") ? (
-            <Link to="/empleados/nuevo">
-              <Button className="gap-2" type="button">
-                <Plus className="w-4 h-4" /> Nuevo Empleado
               </Button>
             </Link>
           ) : null}

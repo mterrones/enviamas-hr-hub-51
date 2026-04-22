@@ -1,11 +1,13 @@
 import type { components } from "@/api/contracts";
 import { AGGREGATION_PAGE_SIZE } from "@/constants/pagination";
-import { apiRequest } from "@/api/client";
+import { apiRequest, ApiHttpError, buildApiUrl } from "@/api/client";
+import { getAuthToken } from "@/api/authToken";
 import { downloadReportPdf, downloadReportXlsx, downloadReportZip } from "@/api/reportExports";
 
 export type PayrollPeriod = components["schemas"]["PayrollPeriod"];
 export type Payslip = components["schemas"]["Payslip"];
 export type PrevisionalPreviewData = components["schemas"]["PrevisionalPreviewData"];
+export type IncomeTaxFifthPreviewData = components["schemas"]["IncomeTaxFifthPreviewData"];
 
 export type PayslipListParams = {
   page?: number;
@@ -69,6 +71,15 @@ export type PrevisionalPreviewBody = components["schemas"]["PrevisionalPreviewWr
 
 export async function fetchPrevisionalPreview(body: PrevisionalPreviewBody) {
   return apiRequest<components["schemas"]["PrevisionalPreviewEnvelope"]>("/payslips/preview-previsional", {
+    method: "POST",
+    body,
+  });
+}
+
+export type IncomeTaxFifthPreviewBody = components["schemas"]["IncomeTaxFifthPreviewWrite"];
+
+export async function fetchIncomeTaxFifthPreview(body: IncomeTaxFifthPreviewBody) {
+  return apiRequest<components["schemas"]["IncomeTaxFifthPreviewEnvelope"]>("/payslips/preview-income-tax-fifth", {
     method: "POST",
     body,
   });
@@ -170,6 +181,7 @@ export async function applyPrevisionalToPayslip(id: number) {
 
 export type DeductionInstallmentPlan = components["schemas"]["DeductionInstallmentPlan"];
 export type DeductionInstallmentPlanWriteBody = components["schemas"]["DeductionInstallmentPlanWrite"];
+export type DeductionInstallmentPlanPatchBody = components["schemas"]["DeductionInstallmentPlanPatch"];
 
 export async function fetchDeductionInstallmentPlans(employeeId: number, params: { status?: string } = {}) {
   const q = new URLSearchParams();
@@ -185,4 +197,57 @@ export async function createDeductionInstallmentPlan(employeeId: number, body: D
     `/employees/${employeeId}/deduction-installment-plans`,
     { method: "POST", body },
   );
+}
+
+export async function patchDeductionInstallmentPlan(
+  employeeId: number,
+  planId: number,
+  body: DeductionInstallmentPlanPatchBody,
+) {
+  return apiRequest<components["schemas"]["DeductionInstallmentPlanEnvelope"]>(
+    `/employees/${employeeId}/deduction-installment-plans/${planId}`,
+    { method: "PATCH", body },
+  );
+}
+
+export async function deleteDeductionInstallmentPlan(employeeId: number, planId: number): Promise<void> {
+  await apiRequest<void>(`/employees/${employeeId}/deduction-installment-plans/${planId}`, { method: "DELETE" });
+}
+
+export async function uploadDeductionPlanEvidence(employeeId: number, planId: number, file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return apiRequest<components["schemas"]["DeductionInstallmentPlanEnvelope"]>(
+    `/employees/${employeeId}/deduction-installment-plans/${planId}/evidence`,
+    { method: "POST", body: fd },
+  );
+}
+
+export async function deleteDeductionPlanEvidence(employeeId: number, planId: number) {
+  return apiRequest<components["schemas"]["DeductionInstallmentPlanEnvelope"]>(
+    `/employees/${employeeId}/deduction-installment-plans/${planId}/evidence`,
+    { method: "DELETE" },
+  );
+}
+
+export async function downloadDeductionPlanEvidenceBlob(employeeId: number, planId: number): Promise<Blob> {
+  const headers = new Headers();
+  const token = getAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(buildApiUrl(`/employees/${employeeId}/deduction-installment-plans/${planId}/evidence`), {
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { message: text || res.statusText };
+    }
+    throw new ApiHttpError(res.status, parsed);
+  }
+  return res.blob();
 }
